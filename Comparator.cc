@@ -15,6 +15,17 @@ static int getNumDiffsToShow() {
 
 namespace hip_intercept {
 
+// Helper function to get operation name
+static std::string getOperationName(MemoryOpType type) {
+    switch (type) {
+        case MemoryOpType::COPY: return "hipMemcpy";
+        case MemoryOpType::COPY_ASYNC: return "hipMemcpyAsync";
+        case MemoryOpType::SET: return "hipMemset";
+        case MemoryOpType::ALLOC: return "hipMalloc";
+        default: return "Unknown";
+    }
+}
+
 class ProgressBar {
 public:
     ProgressBar(size_t total, size_t width = 50) 
@@ -412,6 +423,9 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         kernel_idx++;
     }
     
+    // Add operation type counters
+    std::unordered_map<MemoryOpType, size_t> op_counters;
+    
     // Add memory operation differences
     size_t mem_op_idx = 0;
     for (size_t i = 0; i < result.trace1.memory_operations.size() && 
@@ -419,11 +433,15 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         const auto& op1 = result.trace1.memory_operations[i];
         const auto& op2 = result.trace2.memory_operations[i];
         
+        // Increment counter for this operation type
+        size_t type_count = ++op_counters[op1.type];
+        
         if (op1.type != op2.type || op1.size != op2.size || 
             (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind)) {
             
             std::stringstream ss;
-            ss << "\nOp#" << op1.execution_order << ": ";
+            ss << "\nOp#" << op1.execution_order << " (" 
+               << getOperationName(op1.type) << " call #" << type_count << "): ";
             
             // First trace operation details
             ss << memOpTypeToString(op1.type) << "(dst=" << op1.dst 
@@ -480,8 +498,10 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                      op1.pre_state->size) != 0))) {
             
             std::stringstream ss;
-            ss << "\nOp#" << op1.execution_order << ": Memory state mismatch in "
-               << memOpTypeToString(op1.type) << "(dst=" << op1.dst 
+            ss << "\nOp#" << op1.execution_order << " (" 
+               << getOperationName(op1.type) << " call #" << type_count << "): "
+               << "Memory state mismatch in " << getOperationName(op1.type)
+               << "(dst=" << op1.dst 
                << ", src=" << op1.src 
                << ", size=" << op1.size;
             if (op1.type != MemoryOpType::ALLOC) {
