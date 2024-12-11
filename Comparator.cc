@@ -279,10 +279,24 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
             const auto& op1 = trace1.memory_operations[event1.index];
             const auto& op2 = trace2.memory_operations[event2.index];
             
-            if (op1.type != op2.type || op1.size != op2.size || op1.kind != op2.kind) {
+            if (op1.type != op2.type || op1.size != op2.size || 
+                (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind)) {  // Only check kind for non-ALLOC ops
                 result.traces_match = false;
-                result.error_message += "Memory operation differs in type, size, or kind at order " + 
-                    std::to_string(event1.execution_order) + "\n";
+                std::stringstream err;
+                err << "Memory operation differs at order " << event1.execution_order << ":\n";
+                if (op1.type != op2.type) {
+                    err << "  - Type mismatch: " << memOpTypeToString(op1.type) 
+                        << " vs " << memOpTypeToString(op2.type) << "\n";
+                }
+                if (op1.size != op2.size) {
+                    err << "  - Size mismatch: " << op1.size << " vs " << op2.size 
+                        << " bytes\n";
+                }
+                if (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind) {
+                    err << "  - Kind mismatch: " << memcpyKindToString(op1.kind) 
+                        << " vs " << memcpyKindToString(op2.kind) << "\n";
+                }
+                result.error_message += err.str();
             }
             
             if ((op1.pre_state && !op2.pre_state) || (!op1.pre_state && op2.pre_state)) {
@@ -391,12 +405,8 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         const auto& op1 = result.trace1.memory_operations[i];
         const auto& op2 = result.trace2.memory_operations[i];
         
-        if (op1.type != op2.type || op1.size != op2.size || op1.kind != op2.kind ||
-            (op1.pre_state && !op2.pre_state) || (!op1.pre_state && op2.pre_state) ||
-            (op1.pre_state && op2.pre_state && 
-             (op1.pre_state->size != op2.pre_state->size ||
-              memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
-                     op1.pre_state->size) != 0))) {
+        if (op1.type != op2.type || op1.size != op2.size || 
+            (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind)) {
             
             std::stringstream ss;
             ss << "\nOp#" << op1.execution_order << ": ";
@@ -404,9 +414,11 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
             // First trace operation details
             ss << memOpTypeToString(op1.type) << "(dst=" << op1.dst 
                << ", src=" << op1.src 
-               << ", size=" << op1.size 
-               << ", kind=" << memcpyKindToString(op1.kind)
-               << ", stream=" << op1.stream << ")";
+               << ", size=" << op1.size;
+            if (op1.type != MemoryOpType::ALLOC) {
+                ss << ", kind=" << memcpyKindToString(op1.kind);
+            }
+            ss << ", stream=" << op1.stream << ")";
             
             // vs
             ss << "\n  vs\n";
@@ -414,39 +426,73 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
             // Second trace operation details
             ss << memOpTypeToString(op2.type) << "(dst=" << op2.dst 
                << ", src=" << op2.src 
-               << ", size=" << op2.size 
-               << ", kind=" << memcpyKindToString(op2.kind)
-               << ", stream=" << op2.stream << ")";
+               << ", size=" << op2.size;
+            if (op2.type != MemoryOpType::ALLOC) {
+                ss << ", kind=" << memcpyKindToString(op2.kind);
+            }
+            ss << ", stream=" << op2.stream << ")";
 
-            // Add differences section if needed
-            if (op1.type != op2.type || op1.size != op2.size || 
-                op1.kind != op2.kind || op1.stream != op2.stream) {
-                ss << "\n  Differences:";
-                bool first_diff = true;
+            // Add differences section
+            ss << "\n  Differences:";
+            bool first_diff = true;
 
-                if (op1.type != op2.type) {
-                    ss << " Type mismatch";
-                    first_diff = false;
-                }
-                if (op1.size != op2.size) {
-                    if (!first_diff) ss << ",";
-                    ss << " Size mismatch";
-                    first_diff = false;
-                }
-                if (op1.kind != op2.kind) {
-                    if (!first_diff) ss << ",";
-                    ss << " Kind mismatch";
-                    first_diff = false;
-                }
-                if (op1.stream != op2.stream) {
-                    if (!first_diff) ss << ",";
-                    ss << " Stream mismatch";
-                }
+            if (op1.type != op2.type) {
+                ss << " Type mismatch";
+                first_diff = false;
+            }
+            if (op1.size != op2.size) {
+                if (!first_diff) ss << ",";
+                ss << " Size mismatch";
+                first_diff = false;
+            }
+            if (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind) {
+                if (!first_diff) ss << ",";
+                ss << " Kind mismatch";
+                first_diff = false;
+            }
+            if (op1.stream != op2.stream) {
+                if (!first_diff) ss << ",";
+                ss << " Stream mismatch";
             }
 
             differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx, 
                 ss.str(), op1.execution_order);
         }
+        
+        if ((op1.pre_state && !op2.pre_state) || (!op1.pre_state && op2.pre_state) ||
+            (op1.pre_state && op2.pre_state && 
+             (op1.pre_state->size != op2.pre_state->size ||
+              memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
+                     op1.pre_state->size) != 0))) {
+            
+            std::stringstream ss;
+            ss << "\nOp#" << op1.execution_order << ": Memory state mismatch in "
+               << memOpTypeToString(op1.type) << "(dst=" << op1.dst 
+               << ", src=" << op1.src 
+               << ", size=" << op1.size;
+            if (op1.type != MemoryOpType::ALLOC) {
+                ss << ", kind=" << memcpyKindToString(op1.kind);
+            }
+            ss << ", stream=" << op1.stream << ")";
+
+            // Add specific details about the mismatch
+            if (op1.pre_state && !op2.pre_state) {
+                ss << "\n  - First trace has pre-state, second trace does not";
+            } else if (!op1.pre_state && op2.pre_state) {
+                ss << "\n  - Second trace has pre-state, first trace does not";
+            } else if (op1.pre_state && op2.pre_state) {
+                if (op1.pre_state->size != op2.pre_state->size) {
+                    ss << "\n  - Pre-state size mismatch: " 
+                       << op1.pre_state->size << " vs " << op2.pre_state->size;
+                } else {
+                    ss << "\n  - Pre-state data content differs";
+                }
+            }
+
+            differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx,
+                ss.str(), op1.execution_order);
+        }
+        
         mem_op_idx++;
     }
     

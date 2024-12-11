@@ -590,13 +590,24 @@ extern "C" {
 hipError_t hipMalloc(void **ptr, size_t size) {
     std::cout << "hipMalloc(ptr=" << (void*)ptr << ", size=" << size << ")\n";
     
+    // Create memory operation record
+    hip_intercept::MemoryOperation op;
+    op.type = hip_intercept::MemoryOpType::ALLOC;
+    op.dst = nullptr;  // Will be filled after allocation
+    op.src = nullptr;
+    op.size = size;
+    op.kind = hipMemcpyHostToHost;  // Set a default kind or remove this line entirely
+    static uint64_t op_count = 0;
+    op.execution_order = op_count++;
+    
     hipError_t result = get_real_hipMalloc()(ptr, size);
     
     if (result == hipSuccess && ptr && *ptr) {
-        // Track the allocation
+        op.dst = *ptr;
         gpu_allocations.emplace(*ptr, AllocationInfo(size));
         std::cout << "Tracking GPU allocation at " << *ptr 
                   << " of size " << size << std::endl;
+        Tracer::instance().recordMemoryOperation(op);
     }
     
     return result;
