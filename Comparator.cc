@@ -160,7 +160,20 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
     size_t kernel_count = 0;
     size_t i1 = 0, i2 = 0;
     
-    while (i1 < timeline1.size() && i2 < timeline2.size()) {
+    while (i1 < timeline1.size() || i2 < timeline2.size()) {
+        if (i1 >= timeline1.size()) {
+            result.traces_match = false;
+            result.error_message += "First trace ended early at execution order " + 
+                std::to_string(timeline2[i2].execution_order) + "\n";
+            break;
+        }
+        if (i2 >= timeline2.size()) {
+            result.traces_match = false;
+            result.error_message += "Second trace ended early at execution order " + 
+                std::to_string(timeline1[i1].execution_order) + "\n";
+            break;
+        }
+
         const auto& event1 = timeline1[i1];
         const auto& event2 = timeline2[i2];
 
@@ -168,7 +181,8 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
             result.traces_match = false;
             result.error_message += "Event type mismatch at execution order " + 
                 std::to_string(event1.execution_order) + "\n";
-            break;
+            i1++; i2++;
+            continue;
         }
 
         if (event1.type == TimelineEvent::KERNEL) {
@@ -189,12 +203,14 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
             
             if (op1.type != op2.type || op1.size != op2.size || op1.kind != op2.kind) {
                 result.traces_match = false;
-                result.error_message += "Memory operation differs in type, size, or kind\n";
+                result.error_message += "Memory operation differs in type, size, or kind at order " + 
+                    std::to_string(event1.execution_order) + "\n";
             }
             
             if ((op1.pre_state && !op2.pre_state) || (!op1.pre_state && op2.pre_state)) {
                 result.traces_match = false;
-                result.error_message += "Memory operation differs in pre-state availability\n";
+                result.error_message += "Memory operation differs in pre-state availability at order " + 
+                    std::to_string(event1.execution_order) + "\n";
             }
             
             if (op1.pre_state && op2.pre_state &&
@@ -202,17 +218,13 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
                  memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
                         op1.pre_state->size) != 0)) {
                 result.traces_match = false;
-                result.error_message += "Memory operation differs in pre-state\n";
+                result.error_message += "Memory operation differs in pre-state at order " + 
+                    std::to_string(event1.execution_order) + "\n";
             }
         }
 
         i1++;
         i2++;
-    }
-
-    if (i1 < timeline1.size() || i2 < timeline2.size()) {
-        result.traces_match = false;
-        result.error_message += "Different number of events in traces\n";
     }
 
     return result;
@@ -224,17 +236,31 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         return;
     }
     
-    std::cout << "Traces differ at:\n";
+    std::cout << "Traces differ:\n";
     
+    // Create a timeline of differences
+    struct DifferenceEvent {
+        enum Type { KERNEL, MEMORY } type;
+        size_t kernel_idx;  // Only valid for KERNEL type
+        std::string message;
+        
+        DifferenceEvent(Type t, size_t idx, std::string msg) 
+            : type(t), kernel_idx(idx), message(std::move(msg)) {}
+    };
+    
+    std::vector<DifferenceEvent> differences;
+    
+    // Add kernel differences
     size_t kernel_idx = 0;
     for (const auto& kr : result.kernel_results) {
         if (!kr.matches) {
-            std::cout << "\nKernel #" << kernel_idx << " (" << kr.kernel_name << ")";
+            std::stringstream ss;
+            ss << "\nKernel #" << kernel_idx << " (" << kr.kernel_name << ")";
             
             if (!kr.differences.empty()) {
-                std::cout << "\n  Config differences: " << kr.differences[0];
+                ss << "\n  Config differences: " << kr.differences[0];
                 for (size_t i = 1; i < kr.differences.size(); i++) {
-                    std::cout << ", " << kr.differences[i];
+                    ss << ", " << kr.differences[i];
                 }
             }
             
@@ -242,32 +268,45 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                 if (!diff.pre_value_mismatches.empty() || 
                     !diff.post_value_mismatches.empty()) {
                     
-                    std::cout << "\n  Arg " << arg_idx << ": ";
+                    ss << "\n  Arg " << arg_idx << ": ";
                     if (!diff.pre_value_mismatches.empty()) {
                         const auto& m = diff.pre_value_mismatches[0];
-                        std::cout << diff.pre_value_mismatches.size() 
-                                 << " pre-exec diffs (first: idx " << m.index 
-                                 << ": " << std::setprecision(6) << m.value1 
-                                 << " vs " << m.value2 << ")";
+                        ss << diff.pre_value_mismatches.size() 
+                           << " pre-exec diffs (first: idx " << m.index 
+                           << ": " << std::setprecision(6) << m.value1 
+                           << " vs " << m.value2 << ")";
                     }
                     if (!diff.post_value_mismatches.empty()) {
-                        if (!diff.pre_value_mismatches.empty()) std::cout << ", ";
+                        if (!diff.pre_value_mismatches.empty()) ss << ", ";
                         const auto& m = diff.post_value_mismatches[0];
-                        std::cout << diff.post_value_mismatches.size() 
-                                 << " post-exec diffs (first: idx " << m.index 
-                                 << ": " << std::setprecision(6) << m.value1 
-                                 << " vs " << m.value2 << ")";
+                        ss << diff.post_value_mismatches.size() 
+                           << " post-exec diffs (first: idx " << m.index 
+                           << ": " << std::setprecision(6) << m.value1 
+                           << " vs " << m.value2 << ")";
                     }
                 }
             }
-            std::cout << "\n";
+            differences.emplace_back(DifferenceEvent::KERNEL, kernel_idx, ss.str());
         }
         kernel_idx++;
     }
     
+    // Add memory operation differences
     if (!result.error_message.empty()) {
-        std::cout << "\nMemory operation errors: " << result.error_message;
+        std::istringstream iss(result.error_message);
+        std::string line;
+        while (std::getline(iss, line)) {
+            if (!line.empty()) {
+                differences.emplace_back(DifferenceEvent::MEMORY, 0, "\nMemory operation: " + line);
+            }
+        }
     }
+    
+    // Print all differences in order
+    for (const auto& diff : differences) {
+        std::cout << diff.message;
+    }
+    std::cout << std::endl;
 }
 
 ComparisonResult Comparator::compare(const std::string& trace_path1, const std::string& trace_path2) {
