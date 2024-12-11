@@ -64,6 +64,8 @@ extern "C" {
                                     unsigned int blockDimZ, unsigned int sharedMemBytes,
                                     hipStream_t stream, void** kernelParams,
                                     void** extra);
+    hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes, 
+                             hipMemcpyKind kind, hipStream_t stream);
 }
 
 #endif // HIP_INTERCEPT_LAYER_INTERCEPTOR_HH

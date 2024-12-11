@@ -55,6 +55,7 @@ struct KernelExecution {
 // Memory operation record
 enum class MemoryOpType {
     COPY,
+    COPY_ASYNC,
     SET
 };
 
@@ -66,6 +67,7 @@ struct MemoryOperation {
     int value;
     hipMemcpyKind kind;
     uint64_t execution_order;
+    hipStream_t stream;
     
     std::shared_ptr<MemoryState> pre_state;
     std::shared_ptr<MemoryState> post_state;

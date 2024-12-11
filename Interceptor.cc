@@ -53,6 +53,9 @@ typedef hipError_t (*hipModuleGetFunction_fn)(hipFunction_t*, hipModule_t, const
 typedef hiprtcResult (*hiprtcCompileProgram_fn)(hiprtcProgram, int, const char**);
 typedef hiprtcResult (*hiprtcCreateProgram_fn)(hiprtcProgram*, const char*, const char*, int, const char**, const char**);
 
+// Add with other function pointer typedefs
+typedef hipError_t (*hipMemcpyAsync_fn)(void*, const void*, size_t, hipMemcpyKind, hipStream_t);
+
 // Get the real function pointers
 void* getOriginalFunction(const char* name) {
     std::cout << "Looking for symbol: " << name << std::endl;
@@ -132,6 +135,12 @@ hiprtcCreateProgram_fn get_real_hiprtcCreateProgram() {
 
 hiprtcCompileProgram_fn get_real_hiprtcCompileProgram() {
     static auto fn = (hiprtcCompileProgram_fn)getOriginalFunction("hiprtcCompileProgram");
+    return fn;
+}
+
+// Add with other function getters
+hipMemcpyAsync_fn get_real_hipMemcpyAsync() {
+    static auto fn = (hipMemcpyAsync_fn)getOriginalFunction("hipMemcpyAsync");
     return fn;
 }
 
@@ -757,6 +766,56 @@ hiprtcResult hiprtcCompileProgram(hiprtcProgram prog,
                                  const char** options) {
     std::cout << "\n=== INTERCEPTED hiprtcCompileProgram ===\n";
     return get_real_hiprtcCompileProgram()(prog, numOptions, options);
+}
+
+// Add implementation
+hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes, 
+                         hipMemcpyKind kind, hipStream_t stream) {
+    std::cout << "\n=== INTERCEPTED hipMemcpyAsync ===\n";
+    std::cout << "hipMemcpyAsync(dst=" << dst << ", src=" << src 
+              << ", size=" << sizeBytes << ", kind=" << memcpyKindToString(kind)
+              << ", stream=" << stream << ")\n";
+    
+    hip_intercept::MemoryOperation op;
+    op.type = hip_intercept::MemoryOpType::COPY_ASYNC;
+    op.dst = dst;
+    op.src = src;
+    op.size = sizeBytes;
+    op.kind = kind;
+    op.stream = stream;
+    static uint64_t op_count = 0;
+    op.execution_order = op_count++;
+
+    // For device-to-host or device-to-device copies, capture pre-state
+    if (kind == hipMemcpyDeviceToHost || kind == hipMemcpyDeviceToDevice) {
+        auto [base_ptr, info] = findContainingAllocation(const_cast<void*>(src));
+        if (base_ptr && info) {
+            createShadowCopy(base_ptr, *info);
+            op.pre_state = std::make_shared<hip_intercept::MemoryState>(
+                info->shadow_copy.get(), info->size);
+        }
+    }
+
+    // Execute the actual memory copy
+    hipError_t result = get_real_hipMemcpyAsync()(dst, src, sizeBytes, kind, stream);
+
+    // Synchronize to ensure the copy is complete before capturing state
+    (void)get_real_hipDeviceSynchronize()();
+
+    // For host-to-device or device-to-device copies, capture post-state
+    if (kind == hipMemcpyHostToDevice || kind == hipMemcpyDeviceToDevice) {
+        auto [base_ptr, info] = findContainingAllocation(dst);
+        if (base_ptr && info) {
+            createShadowCopy(base_ptr, *info);
+            op.post_state = std::make_shared<hip_intercept::MemoryState>(
+                info->shadow_copy.get(), info->size);
+        }
+    }
+
+    // Record the operation
+    Tracer::instance().recordMemoryOperation(op);
+    
+    return result;
 }
 
 } // extern "C"
