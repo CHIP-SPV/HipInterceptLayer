@@ -2,8 +2,51 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <chrono>
+#include <thread>
 
 namespace hip_intercept {
+
+class ProgressBar {
+public:
+    ProgressBar(size_t total, size_t width = 50) 
+        : total_(total), width_(width), 
+          last_print_(std::chrono::steady_clock::now()) {}
+
+    void update(size_t current) {
+        if (total_ == 0) return;
+        
+        // Only update every 100ms to avoid too frequent updates
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_print_).count();
+        if (elapsed < 100 && current != total_) return;
+        
+        float progress = static_cast<float>(current) / total_;
+        int pos = static_cast<int>(width_ * progress);
+        
+        std::cout << "\r[";
+        for (int i = 0; i < width_; ++i) {
+            if (i < pos) std::cout << "=";
+            else if (i == pos) std::cout << ">";
+            else std::cout << " ";
+        }
+        std::cout << "] " << int(progress * 100.0) << "% "
+                 << "(" << current << "/" << total_ << ")"
+                 << std::flush;
+        
+        last_print_ = now;
+        
+        if (current == total_) {
+            std::cout << std::endl;
+        }
+    }
+
+private:
+    size_t total_;
+    size_t width_;
+    std::chrono::steady_clock::time_point last_print_;
+};
 
 Comparator::Comparator(float epsilon) : epsilon_(epsilon) {}
 
@@ -118,7 +161,6 @@ KernelComparisonResult Comparator::compareKernelExecutions(
 }
 
 ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
-    // Initialize with copies of the input traces
     ComparisonResult result{false, SIZE_MAX, "", {}, trace1, trace2};
     result.traces_match = true;
 
@@ -164,10 +206,18 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
     std::sort(timeline1.begin(), timeline1.end());
     std::sort(timeline2.begin(), timeline2.end());
 
+    // Calculate total events for progress bar
+    size_t total_events = timeline1.size();
+    ProgressBar progress(total_events);
+    std::cout << "Comparing traces..." << std::endl;
+
     size_t kernel_count = 0;
     size_t i1 = 0, i2 = 0;
+    size_t events_processed = 0;
     
     while (i1 < timeline1.size() || i2 < timeline2.size()) {
+        progress.update(events_processed++);
+
         if (i1 >= timeline1.size()) {
             result.traces_match = false;
             result.error_message += "First trace ended early at execution order " + 
@@ -234,6 +284,9 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
         i2++;
     }
 
+    // Ensure progress bar shows 100%
+    progress.update(total_events);
+    
     return result;
 }
 
@@ -263,9 +316,14 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
     
     std::vector<DifferenceEvent> differences;
     
+    std::cout << "Processing differences..." << std::endl;
+    ProgressBar progress(result.kernel_results.size());
+    
     // Add kernel differences
     size_t kernel_idx = 0;
     for (const auto& kr : result.kernel_results) {
+        progress.update(kernel_idx);
+        
         if (!kr.matches) {
             std::stringstream ss;
             ss << "\nKernel #" << kernel_idx << " (" << kr.kernel_name << ")";
@@ -305,6 +363,9 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         }
         kernel_idx++;
     }
+    
+    // Ensure progress bar shows 100%
+    progress.update(result.kernel_results.size());
     
     // Add memory operation differences
     if (!result.error_message.empty()) {
