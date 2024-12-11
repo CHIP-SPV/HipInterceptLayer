@@ -1,3 +1,8 @@
+#pragma once
+
+#include "Types.hh"
+#include "Util.hh"
+
 #ifndef HIP_INTERCEPT_LAYER_TRACER_HH
 #define HIP_INTERCEPT_LAYER_TRACER_HH
 
@@ -88,13 +93,6 @@ struct KernelExecution {
     std::vector<void*> arg_ptrs;
     std::vector<size_t> arg_sizes;
     std::map<int, std::vector<std::pair<size_t, std::pair<float, float>>>> changes_by_arg;
-};
-
-// Memory operation record
-enum class MemoryOpType {
-    COPY,
-    COPY_ASYNC,
-    SET
 };
 
 struct MemoryOperation {

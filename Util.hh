@@ -1,6 +1,7 @@
 #ifndef HIP_INTERCEPT_LAYER_UTIL_HH
 #define HIP_INTERCEPT_LAYER_UTIL_HH
 
+#include "Types.hh"
 #define __HIP_PLATFORM_SPIRV__
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
@@ -26,6 +27,7 @@
 #include <cstdio>
 #include <memory>
 #include <link.h>
+#include "Tracer.hh"
 
 
 //Forward declarations

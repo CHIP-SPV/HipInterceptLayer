@@ -36,6 +36,7 @@ struct KernelComparisonResult {
     std::string kernel_name;
     std::vector<std::string> differences;
     std::unordered_map<int, ValueDifference> value_differences;
+    uint64_t execution_order;
 };
 
 // Structure to hold overall comparison results

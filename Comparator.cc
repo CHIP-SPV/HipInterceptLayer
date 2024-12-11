@@ -107,6 +107,7 @@ KernelComparisonResult Comparator::compareKernelExecutions(
     KernelComparisonResult result;
     result.matches = true;
     result.kernel_name = exec1.kernel_name;
+    result.execution_order = exec1.execution_order;
     
     if (exec1.kernel_name != exec2.kernel_name) {
         result.matches = false;
@@ -328,12 +329,11 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         enum Type { KERNEL, MEMORY } type;
         size_t kernel_idx;  // Only valid for KERNEL type
         std::string message;
-        uint64_t execution_order; // Add execution order
+        uint64_t execution_order;
         
         DifferenceEvent(Type t, size_t idx, std::string msg, uint64_t order) 
             : type(t), kernel_idx(idx), message(std::move(msg)), execution_order(order) {}
             
-        // Sort by execution order
         bool operator<(const DifferenceEvent& other) const {
             return execution_order < other.execution_order;
         }
@@ -341,17 +341,12 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
     
     std::vector<DifferenceEvent> differences;
     
-    std::cout << "Processing differences..." << std::endl;
-    ProgressBar progress(result.kernel_results.size());
-    
     // Add kernel differences
     size_t kernel_idx = 0;
     for (const auto& kr : result.kernel_results) {
-        progress.update(kernel_idx);
-        
         if (!kr.matches) {
             std::stringstream ss;
-            ss << "\nKernel #" << kernel_idx << " (" << kr.kernel_name << ")";
+            ss << "\nOp#" << kr.execution_order << ": Kernel(" << kr.kernel_name << ")";
             
             if (!kr.differences.empty()) {
                 ss << "\n  Config differences: " << kr.differences[0];
@@ -382,32 +377,50 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                     }
                 }
             }
-            // Get execution order from the trace
+            
             uint64_t exec_order = result.trace1.kernel_executions[kernel_idx].execution_order;
             differences.emplace_back(DifferenceEvent::KERNEL, kernel_idx, ss.str(), exec_order);
         }
         kernel_idx++;
     }
     
-    // Ensure progress bar shows 100%
-    progress.update(result.kernel_results.size());
-    
     // Add memory operation differences
-    if (!result.error_message.empty()) {
-        std::regex order_regex(R"(order (\d+))");
-        std::istringstream iss(result.error_message);
-        std::string line;
-        while (std::getline(iss, line)) {
-            if (!line.empty()) {
-                std::smatch match;
-                uint64_t order = 0;
-                if (std::regex_search(line, match, order_regex)) {
-                    order = std::stoull(match[1]);
-                }
-                differences.emplace_back(DifferenceEvent::MEMORY, 0, 
-                    "\nMemory operation: " + line, order);
+    size_t mem_op_idx = 0;
+    for (size_t i = 0; i < result.trace1.memory_operations.size() && 
+         i < result.trace2.memory_operations.size(); i++) {
+        const auto& op1 = result.trace1.memory_operations[i];
+        const auto& op2 = result.trace2.memory_operations[i];
+        
+        if (op1.type != op2.type || op1.size != op2.size || op1.kind != op2.kind ||
+            (op1.pre_state && !op2.pre_state) || (!op1.pre_state && op2.pre_state) ||
+            (op1.pre_state && op2.pre_state && 
+             (op1.pre_state->size != op2.pre_state->size ||
+              memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
+                     op1.pre_state->size) != 0))) {
+            
+            std::stringstream ss;
+            ss << "\nOp#" << op1.execution_order << ": MemOp(";
+            
+            // Add detailed memory operation information
+            if (op1.type != op2.type) {
+                ss << "Type mismatch: " << memOpTypeToString(op1.type) 
+                   << " vs " << memOpTypeToString(op2.type);
             }
+            if (op1.size != op2.size) {
+                if (op1.type != op2.type) ss << ", ";
+                ss << "Size mismatch: " << op1.size << " vs " << op2.size;
+            }
+            if (op1.kind != op2.kind) {
+                if (op1.type != op2.type || op1.size != op2.size) ss << ", ";
+                ss << "Kind mismatch: " << memcpyKindToString(op1.kind) 
+                   << " vs " << memcpyKindToString(op2.kind);
+            }
+            ss << ")";
+            
+            differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx, 
+                ss.str(), op1.execution_order);
         }
+        mem_op_idx++;
     }
     
     // Sort differences by execution order
