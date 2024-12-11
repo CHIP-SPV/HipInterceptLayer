@@ -17,7 +17,9 @@ Tracer& Tracer::instance() {
     return instance;
 }
 
-Tracer::Tracer() : initialized_(false) {
+Tracer::Tracer() 
+    : initialized_(false)
+    , current_execution_order_(0) {
     initializeTraceFile();
 }
 
@@ -56,12 +58,24 @@ void Tracer::initializeTraceFile() {
 
 void Tracer::recordKernelLaunch(const KernelExecution& exec) {
     if (!initialized_) return;
-    writeKernelExecution(exec);
+    
+    // Assign execution order
+    KernelExecution ordered_exec = exec;
+    ordered_exec.execution_order = current_execution_order_++;
+    
+    writeKernelExecution(ordered_exec);
+    flush(); // Ensure the event is written immediately
 }
 
 void Tracer::recordMemoryOperation(const MemoryOperation& op) {
     if (!initialized_) return;
-    writeMemoryOperation(op);
+    
+    // Assign execution order
+    MemoryOperation ordered_op = op;
+    ordered_op.execution_order = current_execution_order_++;
+    
+    writeMemoryOperation(ordered_op);
+    flush(); // Ensure the event is written immediately
 }
 
 void Tracer::writeEvent(uint32_t type, const void* data, size_t size) {
@@ -227,9 +241,8 @@ std::string Tracer::getTraceFilePath() const {
 }
 
 void Tracer::flush() {
-    if (trace_file_.is_open()) {
-        trace_file_.flush();
-    }
+    if (!initialized_) return;
+    trace_file_.flush();
 }
 
 // Add Tracer method implementations

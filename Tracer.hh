@@ -1,7 +1,7 @@
 #ifndef HIP_INTERCEPT_LAYER_TRACER_HH
 #define HIP_INTERCEPT_LAYER_TRACER_HH
 
-#include "Util.hh"
+    #include "Util.hh"
 
 #include <string>
 #include <fstream>
@@ -32,6 +32,44 @@ struct MemoryState {
     explicit MemoryState(size_t s);
     MemoryState(const char* src, size_t s);
     MemoryState(); // Default constructor
+    
+    // Add copy constructor
+    MemoryState(const MemoryState& other) : size(other.size) {
+        if (other.data) {
+            data = std::make_unique<char[]>(size);
+            std::memcpy(data.get(), other.data.get(), size);
+        }
+    }
+    
+    // Add copy assignment operator
+    MemoryState& operator=(const MemoryState& other) {
+        if (this != &other) {
+            size = other.size;
+            if (other.data) {
+                data = std::make_unique<char[]>(size);
+                std::memcpy(data.get(), other.data.get(), size);
+            } else {
+                data.reset();
+            }
+        }
+        return *this;
+    }
+    
+    // Add move constructor
+    MemoryState(MemoryState&& other) noexcept 
+        : data(std::move(other.data)), size(other.size) {
+        other.size = 0;
+    }
+    
+    // Add move assignment operator
+    MemoryState& operator=(MemoryState&& other) noexcept {
+        if (this != &other) {
+            data = std::move(other.data);
+            size = other.size;
+            other.size = 0;
+        }
+        return *this;
+    }
 };
 
 // Kernel execution record
@@ -76,6 +114,7 @@ struct MemoryOperation {
 struct Trace {
     std::vector<KernelExecution> kernel_executions;
     std::vector<MemoryOperation> memory_operations;
+    uint64_t timestamp;
 };
 
 class Tracer {
@@ -117,6 +156,8 @@ private:
     
     static KernelExecution readKernelExecution(std::ifstream& file);
     static MemoryOperation readMemoryOperation(std::ifstream& file);
+    
+    uint64_t current_execution_order_;
 };
 
 } // namespace hip_intercept

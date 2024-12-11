@@ -44,6 +44,8 @@ struct ComparisonResult {
     size_t first_divergence_point;
     std::string error_message;
     std::vector<KernelComparisonResult> kernel_results;
+    Trace trace1;
+    Trace trace2;
 };
 
 class Comparator {

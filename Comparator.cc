@@ -118,9 +118,9 @@ KernelComparisonResult Comparator::compareKernelExecutions(
 }
 
 ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
-    ComparisonResult result;
+    // Initialize with copies of the input traces
+    ComparisonResult result{false, SIZE_MAX, "", {}, trace1, trace2};
     result.traces_match = true;
-    result.first_divergence_point = SIZE_MAX;
 
     struct TimelineEvent {
         enum Type { KERNEL, MEMORY } type;
@@ -129,10 +129,19 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
         
         TimelineEvent(Type t, size_t i, uint64_t order) 
             : type(t), index(i), execution_order(order) {}
+
+        bool operator<(const TimelineEvent& other) const {
+            if (execution_order != other.execution_order) {
+                return execution_order < other.execution_order;
+            }
+            // If execution orders are equal, maintain stable ordering by type
+            return type < other.type;
+        }
     };
 
     std::vector<TimelineEvent> timeline1, timeline2;
 
+    // Merge kernel executions and memory operations into timelines
     for (size_t i = 0; i < trace1.kernel_executions.size(); i++) {
         timeline1.emplace_back(TimelineEvent::KERNEL, i, 
                              trace1.kernel_executions[i].execution_order);
@@ -151,11 +160,9 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
                              trace2.memory_operations[i].execution_order);
     }
 
-    auto sort_by_order = [](const TimelineEvent& a, const TimelineEvent& b) {
-        return a.execution_order < b.execution_order;
-    };
-    std::sort(timeline1.begin(), timeline1.end(), sort_by_order);
-    std::sort(timeline2.begin(), timeline2.end(), sort_by_order);
+    // Sort both timelines by execution order and type
+    std::sort(timeline1.begin(), timeline1.end());
+    std::sort(timeline2.begin(), timeline2.end());
 
     size_t kernel_count = 0;
     size_t i1 = 0, i2 = 0;
@@ -243,9 +250,15 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         enum Type { KERNEL, MEMORY } type;
         size_t kernel_idx;  // Only valid for KERNEL type
         std::string message;
+        uint64_t execution_order; // Add execution order
         
-        DifferenceEvent(Type t, size_t idx, std::string msg) 
-            : type(t), kernel_idx(idx), message(std::move(msg)) {}
+        DifferenceEvent(Type t, size_t idx, std::string msg, uint64_t order) 
+            : type(t), kernel_idx(idx), message(std::move(msg)), execution_order(order) {}
+            
+        // Sort by execution order
+        bool operator<(const DifferenceEvent& other) const {
+            return execution_order < other.execution_order;
+        }
     };
     
     std::vector<DifferenceEvent> differences;
@@ -286,21 +299,33 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                     }
                 }
             }
-            differences.emplace_back(DifferenceEvent::KERNEL, kernel_idx, ss.str());
+            // Get execution order from the trace
+            uint64_t exec_order = result.trace1.kernel_executions[kernel_idx].execution_order;
+            differences.emplace_back(DifferenceEvent::KERNEL, kernel_idx, ss.str(), exec_order);
         }
         kernel_idx++;
     }
     
     // Add memory operation differences
     if (!result.error_message.empty()) {
+        std::regex order_regex(R"(order (\d+))");
         std::istringstream iss(result.error_message);
         std::string line;
         while (std::getline(iss, line)) {
             if (!line.empty()) {
-                differences.emplace_back(DifferenceEvent::MEMORY, 0, "\nMemory operation: " + line);
+                std::smatch match;
+                uint64_t order = 0;
+                if (std::regex_search(line, match, order_regex)) {
+                    order = std::stoull(match[1]);
+                }
+                differences.emplace_back(DifferenceEvent::MEMORY, 0, 
+                    "\nMemory operation: " + line, order);
             }
         }
     }
+    
+    // Sort differences by execution order
+    std::sort(differences.begin(), differences.end());
     
     // Print all differences in order
     for (const auto& diff : differences) {
@@ -311,13 +336,29 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
 
 ComparisonResult Comparator::compare(const std::string& trace_path1, const std::string& trace_path2) {
     try {
-        Trace trace1 = Tracer::loadTrace(trace_path1);
-        Trace trace2 = Tracer::loadTrace(trace_path2);
-        return compare(trace1, trace2);
+        // Load traces first
+        Trace t1 = Tracer::loadTrace(trace_path1);
+        Trace t2 = Tracer::loadTrace(trace_path2);
+        
+        // Create result with loaded traces
+        ComparisonResult result{false, SIZE_MAX, "", {}, std::move(t1), std::move(t2)};
+        result.traces_match = true;
+        
+        // Compare the loaded traces
+        auto timeline_result = compare(result.trace1, result.trace2);
+        
+        // Copy comparison results
+        result.traces_match = timeline_result.traces_match;
+        result.first_divergence_point = timeline_result.first_divergence_point;
+        result.error_message = timeline_result.error_message;
+        result.kernel_results = timeline_result.kernel_results;
+        
+        return result;
     } catch (const std::exception& e) {
-        ComparisonResult result;
-        result.traces_match = false;
-        result.error_message = std::string("Failed to load traces: ") + e.what();
+        // Create an empty result with error message
+        ComparisonResult result{false, SIZE_MAX, 
+            std::string("Failed to load traces: ") + e.what(), 
+            {}, Trace{}, Trace{}};
         return result;
     }
 }
