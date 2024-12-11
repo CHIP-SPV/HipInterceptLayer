@@ -771,7 +771,8 @@ hiprtcResult hiprtcCompileProgram(hiprtcProgram prog,
 // Add implementation
 hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes, 
                          hipMemcpyKind kind, hipStream_t stream) {
-    std::cout << "\n=== INTERCEPTED hipMemcpyAsync ===\n";
+    static uint64_t op_count = 0;
+    std::cout << "\n=== INTERCEPTED hipMemcpyAsync #" << op_count << " ===\n";
     std::cout << "hipMemcpyAsync(dst=" << dst << ", src=" << src 
               << ", size=" << sizeBytes << ", kind=" << memcpyKindToString(kind)
               << ", stream=" << stream << ")\n";
@@ -783,7 +784,6 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
     op.size = sizeBytes;
     op.kind = kind;
     op.stream = stream;
-    static uint64_t op_count = 0;
     op.execution_order = op_count++;
 
     // For device-to-host or device-to-device copies, capture pre-state

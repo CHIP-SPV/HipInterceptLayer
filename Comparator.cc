@@ -399,24 +399,51 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                      op1.pre_state->size) != 0))) {
             
             std::stringstream ss;
-            ss << "\nOp#" << op1.execution_order << ": MemOp(";
+            ss << "\nOp#" << op1.execution_order << ": ";
             
-            // Add detailed memory operation information
-            if (op1.type != op2.type) {
-                ss << "Type mismatch: " << memOpTypeToString(op1.type) 
-                   << " vs " << memOpTypeToString(op2.type);
-            }
-            if (op1.size != op2.size) {
-                if (op1.type != op2.type) ss << ", ";
-                ss << "Size mismatch: " << op1.size << " vs " << op2.size;
-            }
-            if (op1.kind != op2.kind) {
-                if (op1.type != op2.type || op1.size != op2.size) ss << ", ";
-                ss << "Kind mismatch: " << memcpyKindToString(op1.kind) 
-                   << " vs " << memcpyKindToString(op2.kind);
-            }
-            ss << ")";
+            // First trace operation details
+            ss << memOpTypeToString(op1.type) << "(dst=" << op1.dst 
+               << ", src=" << op1.src 
+               << ", size=" << op1.size 
+               << ", kind=" << memcpyKindToString(op1.kind)
+               << ", stream=" << op1.stream << ")";
             
+            // vs
+            ss << "\n  vs\n";
+            
+            // Second trace operation details
+            ss << memOpTypeToString(op2.type) << "(dst=" << op2.dst 
+               << ", src=" << op2.src 
+               << ", size=" << op2.size 
+               << ", kind=" << memcpyKindToString(op2.kind)
+               << ", stream=" << op2.stream << ")";
+
+            // Add differences section if needed
+            if (op1.type != op2.type || op1.size != op2.size || 
+                op1.kind != op2.kind || op1.stream != op2.stream) {
+                ss << "\n  Differences:";
+                bool first_diff = true;
+
+                if (op1.type != op2.type) {
+                    ss << " Type mismatch";
+                    first_diff = false;
+                }
+                if (op1.size != op2.size) {
+                    if (!first_diff) ss << ",";
+                    ss << " Size mismatch";
+                    first_diff = false;
+                }
+                if (op1.kind != op2.kind) {
+                    if (!first_diff) ss << ",";
+                    ss << " Kind mismatch";
+                    first_diff = false;
+                }
+                if (op1.stream != op2.stream) {
+                    if (!first_diff) ss << ",";
+                    ss << " Stream mismatch";
+                }
+            }
+
             differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx, 
                 ss.str(), op1.execution_order);
         }
