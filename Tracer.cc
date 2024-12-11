@@ -176,15 +176,25 @@ void Tracer::writeMemoryOperation(const MemoryOperation& op) {
 
 std::string Tracer::getTraceFilePath() const {
     static int trace_id = 0;
-    const char* home = getenv("HOME");
-    if (!home) home = "/tmp";
+    
+    // Check for environment variable override first
+    const char* HIP_TRACE_LOCATION = getenv("HIP_TRACE_LOCATION");
+    std::string base_dir;
+    
+    if (HIP_TRACE_LOCATION) {
+        base_dir = HIP_TRACE_LOCATION;
+    } else {
+        // Use default location under HOME
+        const char* home = getenv("HOME");
+        if (!home) home = "/tmp";
+        base_dir = std::string(home) + "/HipInterceptLayerTraces";
+    }
     
     // Get binary name
     char self_path[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
     if (len == -1) {
-        return std::string(home) + "/hipTracer/unknown-" + 
-               std::to_string(trace_id++) + ".trace";
+        return base_dir + "/unknown-" + std::to_string(trace_id++) + ".trace";
     }
     self_path[len] = '\0';
     
@@ -202,12 +212,11 @@ std::string Tracer::getTraceFilePath() const {
     }
     
     // Create tracer directory
-    std::string tracer_dir = std::string(home) + "/hipTracer";
-    std::cout << "Creating tracer directory: " << tracer_dir << std::endl;
-    mkdir(tracer_dir.c_str(), 0755);
+    std::cout << "Creating tracer directory: " << base_dir << std::endl;
+    mkdir(base_dir.c_str(), 0755);
     
     // Find next available trace ID
-    std::string base_path = tracer_dir + "/" + binary_name + "-";
+    std::string base_path = base_dir + "/" + binary_name + "-";
     while (access((base_path + std::to_string(trace_id) + ".trace").c_str(), F_OK) != -1) {
         trace_id++;
     }
