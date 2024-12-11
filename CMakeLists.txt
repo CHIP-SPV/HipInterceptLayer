@@ -9,19 +9,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(HIP CONFIG REQUIRED)
 message(STATUS "HIP_DIR: ${HIP_DIR}")
 message(STATUS "HIP_LIBRARIES: ${HIP_LIBRARIES}")
+message(STATUS "HIP_INCLUDE_DIRS: ${HIP_INCLUDE_DIRS}")
 
 include_directories(${HIP_INCLUDE_DIRS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # Build libraries and executable
-add_library(HIPTracer SHARED Tracer.cc)
-add_library(HIPIntercept SHARED Interceptor.cc)
-add_executable(HipInterceptCompare Comparator.cc)
+add_library(HIPIntercept SHARED Interceptor.cc KernelManager.cc Tracer.cc)
+add_executable(HipInterceptCompare Comparator.cc Tracer.cc)
 
 # Installation rules
 include(GNUInstallDirs)
 
-install(TARGETS HIPTracer HIPIntercept HipInterceptCompare
+install(TARGETS HIPIntercept HipInterceptCompare
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
