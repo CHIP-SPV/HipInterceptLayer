@@ -161,9 +161,13 @@ KernelComparisonResult Comparator::compareKernelExecutions(
 }
 
 ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
+    auto total_start = std::chrono::steady_clock::now();
+    std::cout << "Starting trace comparison..." << std::endl;
+    
     ComparisonResult result{false, SIZE_MAX, "", {}, trace1, trace2};
     result.traces_match = true;
 
+    // Add back the TimelineEvent struct definition
     struct TimelineEvent {
         enum Type { KERNEL, MEMORY } type;
         size_t index;  // Index in original vector
@@ -181,6 +185,8 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
         }
     };
 
+    auto timeline_start = std::chrono::steady_clock::now();
+    // Timeline creation
     std::vector<TimelineEvent> timeline1, timeline2;
 
     // Merge kernel executions and memory operations into timelines
@@ -202,15 +208,29 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
                              trace2.memory_operations[i].execution_order);
     }
 
+    auto timeline_end = std::chrono::steady_clock::now();
+    auto timeline_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        timeline_end - timeline_start).count();
+    std::cout << "Timeline creation took " << timeline_duration << "ms" << std::endl;
+
+    auto sort_start = std::chrono::steady_clock::now();
     // Sort both timelines by execution order and type
     std::sort(timeline1.begin(), timeline1.end());
     std::sort(timeline2.begin(), timeline2.end());
 
+    auto sort_end = std::chrono::steady_clock::now();
+    auto sort_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        sort_end - sort_start).count();
+    std::cout << "Timeline sorting took " << sort_duration << "ms" << std::endl;
+
     // Calculate total events for progress bar
     size_t total_events = timeline1.size();
+    std::cout << "Total events to compare: " << total_events << std::endl;
     ProgressBar progress(total_events);
     std::cout << "Comparing traces..." << std::endl;
 
+    auto compare_start = std::chrono::steady_clock::now();
+    
     size_t kernel_count = 0;
     size_t i1 = 0, i2 = 0;
     size_t events_processed = 0;
@@ -286,6 +306,11 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
 
     // Ensure progress bar shows 100%
     progress.update(total_events);
+    
+    auto total_end = std::chrono::steady_clock::now();
+    auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        total_end - total_start).count();
+    std::cout << "\nTotal comparison took " << total_duration << "ms" << std::endl;
     
     return result;
 }
@@ -396,10 +421,24 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
 }
 
 ComparisonResult Comparator::compare(const std::string& trace_path1, const std::string& trace_path2) {
+    auto start = std::chrono::steady_clock::now();
+    std::cout << "Loading traces..." << std::endl;
+    
     try {
         // Load traces first
+        auto load_start = std::chrono::steady_clock::now();
         Trace t1 = Tracer::loadTrace(trace_path1);
+        auto load_mid = std::chrono::steady_clock::now();
         Trace t2 = Tracer::loadTrace(trace_path2);
+        auto load_end = std::chrono::steady_clock::now();
+
+        auto load1_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            load_mid - load_start).count();
+        auto load2_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            load_end - load_mid).count();
+        
+        std::cout << "Loaded trace 1 in " << load1_duration << "ms" << std::endl;
+        std::cout << "Loaded trace 2 in " << load2_duration << "ms" << std::endl;
         
         // Create result with loaded traces
         ComparisonResult result{false, SIZE_MAX, "", {}, std::move(t1), std::move(t2)};
