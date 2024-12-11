@@ -2,7 +2,8 @@
 #define HIP_INTERCEPT_LAYER_UTIL_HH
 
 #define __HIP_PLATFORM_SPIRV__
-#include "hip/hip_runtime_api.h"
+#include <hip/hip_runtime.h>
+#include <hip/hiprtc.h>
 
 #include <iostream>
 #include <string>
@@ -35,7 +36,23 @@ std::string getKernelSignature(const void* function_address);
 std::string getKernelName(const void* function_address);
 
 
-size_t countKernelArgs(void** args) {
+inline std::string demangle(const std::string& mangled_name) {
+    int status;
+    char* demangled = abi::__cxa_demangle(mangled_name.c_str(), nullptr, nullptr, &status);
+    
+    std::string result;
+    if (status == 0 && demangled) {
+        result = demangled;
+        free(demangled);
+    } else {
+        result = mangled_name;  // Return original if demangling fails
+    }
+    
+    std::cout << "Demangled " << mangled_name << " to " << result << std::endl;
+    return result;
+}
+
+inline size_t countKernelArgs(void** args) {
     if (!args) return 0;
     
     size_t count = 0;
@@ -51,7 +68,7 @@ size_t countKernelArgs(void** args) {
 }
 
 // Helper to print kernel arguments
-void printKernelArgs(void** args, const std::string& kernelName, const void* function_address) {
+inline void printKernelArgs(void** args, const std::string& kernelName, const void* function_address) {
     std::string signature = getKernelSignature(function_address);
     std::cout << "    kernel signature: " << signature << "\n";
     
@@ -127,7 +144,7 @@ void printKernelArgs(void** args, const std::string& kernelName, const void* fun
 }
 
 // Get kernel object file
-std::string getKernelObjectFile(const void* function_address) {
+inline std::string getKernelObjectFile(const void* function_address) {
     //std::cout << "\nSearching for kernel object file containing address " 
     //          << function_address << std::endl;
               
@@ -257,7 +274,7 @@ std::string getKernelObjectFile(const void* function_address) {
 
 
 // Helper to extract kernel signature from binary
-std::string getKernelSignature(const void* function_address) {
+inline std::string getKernelSignature(const void* function_address) {
     // Get the object file containing this kernel
     std::string object_file = getKernelObjectFile(function_address);
     if (object_file == "unknown") {
@@ -334,18 +351,10 @@ std::string getArgTypes() {
   return ss.str();
 }
 
-// Helper to demangle C++ names
-std::string demangle(const char* name) {
-    int status;
-    std::unique_ptr<char, void(*)(void*)> demangled(
-        abi::__cxa_demangle(name, nullptr, nullptr, &status),
-        std::free
-    );
-    return status == 0 ? demangled.get() : name;
-}
+
 
 // Helper function to convert hipMemcpyKind to string
-static const char* memcpyKindToString(hipMemcpyKind kind) {
+inline static const char* memcpyKindToString(hipMemcpyKind kind) {
   switch(kind) {
     case hipMemcpyHostToHost: return "hipMemcpyHostToHost";
     case hipMemcpyHostToDevice: return "hipMemcpyHostToDevice"; 
@@ -358,21 +367,21 @@ static const char* memcpyKindToString(hipMemcpyKind kind) {
 
 
 // Helper function to convert dim3 to string
-static std::string dim3ToString(dim3 d) {
+inline static std::string dim3ToString(dim3 d) {
   std::stringstream ss;
   ss << "{" << d.x << "," << d.y << "," << d.z << "}";
   return ss.str();
 }
 
 // Helper for hipDeviceProp_t
-static std::string devicePropsToString(const hipDeviceProp_t* props) {
+inline static std::string devicePropsToString(const hipDeviceProp_t* props) {
   if (!props) return "null";
   std::stringstream ss;
   ss << "{name=" << props->name << ", totalGlobalMem=" << props->totalGlobalMem << "}";
   return ss.str();
 }
 
-std::string getArgTypeFromSignature(const std::string& signature, size_t arg_index) {
+inline std::string getArgTypeFromSignature(const std::string& signature, size_t arg_index) {
     size_t start = signature.find('(');
     size_t end = signature.find(')');
     if (start == std::string::npos || end == std::string::npos) {
@@ -455,7 +464,7 @@ static bool isVectorType(const std::string& type_name) {
     return false;
 }
 
-std::string getKernelName(const void* function_address) {
+inline std::string getKernelName(const void* function_address) {
     // First find which object file contains this kernel
     auto object_file = getKernelObjectFile(function_address);
     std::cout << "Kernel object file: " << object_file << std::endl;

@@ -2,27 +2,9 @@
 #define HIP_INTERCEPT_LAYER_INTERCEPTOR_HH
 
 #include "Tracer.hh"
-#include <vector>
-#include <map>
-#include <memory>
 #include <string>
-#include <fstream>
-#include <utility>
-#include <cstring>
+#include <vector>
 #include <unordered_map>
-#include "Util.hh"
-#include <sstream>
-#include <iostream>
-#include <dlfcn.h>
-#include <link.h>
-#include <unordered_map>
-#include <algorithm>
-#include <regex>
-#include <unistd.h>
-#include <linux/limits.h>
-#include <chrono>
-#include <filesystem>
-#include <sys/stat.h>
 
 // Forward declarations
 struct dim3;
@@ -30,6 +12,26 @@ struct hipDeviceProp_t;
 
 // Use hip_intercept namespace
 using namespace hip_intercept;
+
+class Kernel {
+public:
+    std::string name;
+    std::string signature;
+    std::string source;
+    std::string binary;
+};
+
+class KernelManager {
+    std::vector<Kernel> kernels;
+public:
+    KernelManager();
+    ~KernelManager();
+    /// @brief Add kernels from a module source file using regex
+    /// @param module_source 
+    void addFromModuleSource(const std::string& module_source);
+    Kernel getKernelByName(const std::string& name);
+    Kernel getKernelByNameMangled(const std::string& name);
+};
 
 // GPU allocation tracking
 class AllocationInfo {

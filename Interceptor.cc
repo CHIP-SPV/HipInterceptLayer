@@ -1,12 +1,27 @@
 #include "Interceptor.hh"
 #include "Tracer.hh"
-#include <hip/hiprtc.h>
 #include <cxxabi.h>
+#include <dlfcn.h>
+#include <link.h>
+#include <iostream>
+#include <regex>
+#include <sstream>
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
+
 using namespace hip_intercept;
 
 std::unordered_map<void*, AllocationInfo> gpu_allocations;
+std::vector<Kernel> kernels;
+
 // Map to store function names for RTC kernels
 static std::unordered_map<hipFunction_t, std::string> rtc_kernel_names;
+// Map to store RTC program sources
+std::unordered_map<hiprtcProgram, std::string> rtc_program_sources;
+
+// Create a KernelManager instance
+static KernelManager kernel_manager;
 
 std::pair<void*, AllocationInfo*> findContainingAllocation(void* ptr) {
     for (auto& [base_ptr, info] : gpu_allocations) {
@@ -19,7 +34,7 @@ std::pair<void*, AllocationInfo*> findContainingAllocation(void* ptr) {
     return std::make_pair(nullptr, nullptr);
 }
 
-namespace {
+
 // Function pointer types
 typedef hipError_t (*hipMalloc_fn)(void**, size_t);
 typedef hipError_t (*hipMemcpy_fn)(void*, const void*, size_t, hipMemcpyKind);
@@ -34,12 +49,9 @@ typedef hipError_t (*hipModuleLaunchKernel_fn)(hipFunction_t, unsigned int,
                                               hipStream_t, void**, void**);
 typedef hipError_t (*hipModuleGetFunction_fn)(hipFunction_t*, hipModule_t, const char*);
 
-// Add back the RTC-related typedefs
+// Add RTC-related typedefs here
 typedef hiprtcResult (*hiprtcCompileProgram_fn)(hiprtcProgram, int, const char**);
 typedef hiprtcResult (*hiprtcCreateProgram_fn)(hiprtcProgram*, const char*, const char*, int, const char**, const char**);
-
-// Add back the source code storage
-static std::unordered_map<hiprtcProgram, std::string> rtc_program_sources;
 
 // Get the real function pointers
 void* getOriginalFunction(const char* name) {
@@ -112,14 +124,14 @@ hipModuleGetFunction_fn get_real_hipModuleGetFunction() {
     return fn;
 }
 
-// Add the RTC getters here, after getOriginalFunction is defined
-hiprtcCompileProgram_fn get_real_hiprtcCompileProgram() {
-    static auto fn = (hiprtcCompileProgram_fn)getOriginalFunction("hiprtcCompileProgram");
+// Function pointer getters
+hiprtcCreateProgram_fn get_real_hiprtcCreateProgram() {
+    static auto fn = (hiprtcCreateProgram_fn)getOriginalFunction("hiprtcCreateProgram");
     return fn;
 }
 
-hiprtcCreateProgram_fn get_real_hiprtcCreateProgram() {
-    static auto fn = (hiprtcCreateProgram_fn)getOriginalFunction("hiprtcCreateProgram");
+hiprtcCompileProgram_fn get_real_hiprtcCompileProgram() {
+    static auto fn = (hiprtcCompileProgram_fn)getOriginalFunction("hiprtcCompileProgram");
     return fn;
 }
 
@@ -327,7 +339,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     // Launch kernel
     hipError_t result = get_real_hipLaunchKernel()(function_address, numBlocks, 
                                                   dimBlocks, args, sharedMemBytes, stream);
-    get_real_hipDeviceSynchronize()();
+    (void)get_real_hipDeviceSynchronize()();
     
     // Capture post-execution state
     for (const auto& [ptr, pre_state] : exec.pre_state) {
@@ -383,26 +395,10 @@ static void registerKernelIfNeeded(const std::string& kernel_name, const std::st
             arg_type.erase(arg_type.find_last_not_of(" ") + 1);
             
             bool is_vector = isVectorType(arg_type);
-            size_t size = is_vector ? sizeof(float4) : sizeof(void*);  // Approximate size
+            size_t size = is_vector ? 16 : sizeof(void*);  // Use fixed size instead of float4
             registerKernelArg(kernel_name, arg_index++, is_vector, size);
         }
     }
-}
-
-std::string demangle(const std::string& mangled_name) {
-    int status;
-    char* demangled = abi::__cxa_demangle(mangled_name.c_str(), nullptr, nullptr, &status);
-    
-    std::string result;
-    if (status == 0 && demangled) {
-        result = demangled;
-        free(demangled);
-    } else {
-        result = mangled_name;  // Return original if demangling fails
-    }
-    
-    std::cout << "Demangled " << mangled_name << " to " << result << std::endl;
-    return result;
 }
 
 // Simplified function to find kernel signature
@@ -449,7 +445,136 @@ std::string getFunctionSignatureFromSource(const std::string& source, const std:
     return "";
 }
 
-} // namespace
+
+
+// Add this helper function in the anonymous namespace
+    void parseKernelsFromSource(const std::string& source) {
+
+        
+        try {
+            // Add kernels from the source code
+            kernel_manager.addFromModuleSource(source);
+            
+            // Log the parsing attempt
+            std::cout << "Parsed kernels from source code" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to parse kernels from source: " << e.what() << std::endl;
+        }
+    }
+
+std::string preprocess_source(const std::string& source,
+                            int numHeaders, const char** headers, const char** headerNames) {
+    if (source.empty()) {
+        std::cerr << "Empty source provided" << std::endl;
+        return source;
+    }
+
+    // First write all sources to temporary files
+    std::string temp_dir = "/tmp/hip_intercept_XXXXXX";
+    char* temp_dir_buf = strdup(temp_dir.c_str());
+    if (!mkdtemp(temp_dir_buf)) {
+        std::cerr << "Failed to create temp directory" << std::endl;
+        free(temp_dir_buf);
+        return source;
+    }
+    temp_dir = temp_dir_buf;
+    free(temp_dir_buf);
+
+    // Write headers
+    std::vector<std::string> header_paths;
+    if (numHeaders > 0 && headers && headerNames) {
+        for (int i = 0; i < numHeaders; i++) {
+            if (headers[i] && headerNames[i]) {  // Check both pointers
+                std::string header_path = temp_dir + "/" + 
+                    (headerNames[i] ? headerNames[i] : "header_" + std::to_string(i));
+                std::ofstream header_file(header_path);
+                if (!header_file) {
+                    std::cerr << "Failed to create header file: " << header_path << std::endl;
+                    continue;
+                }
+                header_file << headers[i];
+                header_paths.push_back(header_path);
+            }
+        }
+    }
+
+    // Write main source
+    std::string source_path = temp_dir + "/source.hip";
+    std::ofstream source_file(source_path);
+    if (!source_file) {
+        std::cerr << "Failed to create source file" << std::endl;
+        std::filesystem::remove_all(temp_dir);  // Clean up before returning
+        return source;
+    }
+    source_file << source;
+    source_file.close();
+
+    // Build g++ command
+    std::string output_path = temp_dir + "/preprocessed.hip";
+    std::stringstream cmd;
+    cmd << "g++ -E -x c++ "; // -E for preprocessing only, -x c++ to force C++ mode
+    
+    // Add include paths for headers
+    for (const auto& header_path : header_paths) {
+        cmd << "-I" << std::filesystem::path(header_path).parent_path() << " ";
+    }
+    
+    // Input and output files
+    cmd << source_path << " -o " << output_path;
+
+    std::cout << "Preprocessing command: " << cmd.str() << std::endl;
+
+    // Execute preprocessor
+    int result = system(cmd.str().c_str());
+    if (result != 0) {
+        std::cerr << "Preprocessing failed with code " << result << std::endl;
+        std::filesystem::remove_all(temp_dir);  // Clean up before returning
+        return source;
+    }
+
+    // Read preprocessed output
+    std::ifstream preprocessed_file(output_path);
+    if (!preprocessed_file) {
+        std::cerr << "Failed to read preprocessed file" << std::endl;
+        std::filesystem::remove_all(temp_dir);  // Clean up before returning
+        return source;
+    }
+
+    std::stringstream buffer;
+    buffer << preprocessed_file.rdbuf();
+    std::string preprocessed = buffer.str();
+
+    // Clean up temporary files
+    std::filesystem::remove_all(temp_dir);
+
+    return preprocessed;
+}
+
+// Update hiprtcCreateProgram implementation
+hiprtcResult hiprtcCreateProgram(hiprtcProgram* prog,
+                                const char* src,
+                                const char* name,
+                                int numHeaders,
+                                const char** headers,
+                                const char** headerNames) {
+    std::cout << "\n=== INTERCEPTED hiprtcCreateProgram ===\n";
+    
+    hiprtcResult result = get_real_hiprtcCreateProgram()(prog, src, name, 
+                                                        numHeaders, headers, headerNames);
+    
+    if (result == HIPRTC_SUCCESS && prog && src) {
+        // Store source code for later reference
+        rtc_program_sources[*prog] = src;
+        std::cout << "Stored RTC program source for handle " << *prog << std::endl;
+
+        auto preprocessed_src = preprocess_source(src, numHeaders, headers, headerNames);
+        // Parse kernels from the source code immediately
+        parseKernelsFromSource(preprocessed_src);
+    }
+    
+    return result;
+}
+
 
 extern "C" {
 
@@ -502,11 +627,11 @@ hipError_t hipMemset(void *dst, int value, size_t sizeBytes) {
 
 // Update hipModuleLaunchKernel to be more defensive
 hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
-                                unsigned int gridDimY, unsigned int gridDimZ,
-                                unsigned int blockDimX, unsigned int blockDimY,
-                                unsigned int blockDimZ, unsigned int sharedMemBytes,
-                                hipStream_t stream, void** kernelParams,
-                                void** extra) {
+                                 unsigned int gridDimY, unsigned int gridDimZ,
+                                 unsigned int blockDimX, unsigned int blockDimY,
+                                 unsigned int blockDimZ, unsigned int sharedMemBytes,
+                                 hipStream_t stream, void** kernelParams,
+                                 void** extra) {
     std::cout << "\n=== INTERCEPTED hipModuleLaunchKernel ===\n";
     std::cout << "hipModuleLaunchKernel(\n"
               << "    function=" << f
@@ -514,63 +639,46 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
               << "\n    blockDim={" << blockDimX << "," << blockDimY << "," << blockDimZ << "}"
               << "\n    sharedMem=" << sharedMemBytes
               << "\n    stream=" << stream << "\n";
-
-    // Try demangling first, fall back to source parsing if needed
+ 
+    // Get kernel info from KernelManager
     std::string kernel_name = rtc_kernel_names[f];
     if (kernel_name.empty()) {
         std::cout << "No kernel name found for function handle " << f << std::endl;
         std::abort();
     }
-
+ 
     std::cout << "Looking up kernel: '" << kernel_name << "'" << std::endl;
-    std::string kernel_signature = demangle(kernel_name);
-    
-    if (true /*kernel_name.compare(kernel_signature) == 0*/) {
-        std::cout << "Kernel might have C linkage, trying source parsing..." << std::endl;
-        // Try to find signature in source code
-        bool found = false;
-        for (const auto& [prog, source] : rtc_program_sources) {
-            std::cout << "Trying source code from program " << prog << std::endl;
-            kernel_signature = getFunctionSignatureFromSource(source, kernel_name);
-            if (!kernel_signature.empty()) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            std::cout << "No source code found containing kernel " << kernel_name << std::endl;
-            std::cout << "Available programs: " << rtc_program_sources.size() << std::endl;
-            for (const auto& [prog, _] : rtc_program_sources) {
-                std::cout << "  " << prog << std::endl;
-            }
-        }
+    Kernel kernel = kernel_manager.getKernelByName(kernel_name);
+    if (kernel.name.empty()) {
+        // Try mangled name lookup
+        kernel = kernel_manager.getKernelByNameMangled(kernel_name);
     }
-    
-    if (kernel_signature.empty()) {
-        std::cout << "Failed to get signature for kernel " << kernel_name << std::endl;
+     
+    if (kernel.name.empty() || kernel.signature.empty()) {
+        std::cout << "Failed to find kernel info for " << kernel_name << std::endl;
         std::abort();
     }
-    
-    std::cout << "Using kernel signature: " << kernel_signature << std::endl;
-    
+     
+    std::cout << "Using kernel signature: " << kernel.signature << std::endl;
+     
     // Create execution record
     hip_intercept::KernelExecution exec;
     exec.function_address = f;
-    exec.kernel_name = kernel_name;
+    exec.kernel_name = kernel.name;
     exec.grid_dim = {gridDimX, gridDimY, gridDimZ};
     exec.block_dim = {blockDimX, blockDimY, blockDimZ};
     exec.shared_mem = sharedMemBytes;
     exec.stream = stream;
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
-
+ 
     // Store argument pointers and capture pre-execution state
     if (kernelParams) {
         size_t num_args = countKernelArgs(kernelParams);
         for (size_t i = 0; i < num_args; i++) {
             if (!kernelParams[i]) continue;
             
-            std::string arg_type = getArgTypeFromSignature(kernel_signature, i);
+            std::string arg_type = getArgTypeFromSignature(kernel.signature, i);
             bool is_vector = isVectorType(arg_type);
             
             void* arg_ptr = nullptr;
@@ -606,7 +714,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                                         blockDimX, blockDimY, blockDimZ,
                                                         sharedMemBytes, stream,
                                                         kernelParams, extra);
-    get_real_hipDeviceSynchronize()();
+    (void)get_real_hipDeviceSynchronize()();
     
     // Capture post-execution state
     for (const auto& [ptr, pre_state] : exec.pre_state) {
@@ -639,25 +747,6 @@ hipError_t hipModuleGetFunction(hipFunction_t* function, hipModule_t module, con
         rtc_kernel_names[*function] = kname;
         std::cout << "Stored RTC kernel name '" << kname 
                   << "' for function handle " << *function << std::endl;
-    }
-    
-    return result;
-}
-
-hiprtcResult hiprtcCreateProgram(hiprtcProgram* prog,
-                                const char* src,
-                                const char* name,
-                                int numHeaders,
-                                const char** headers,
-                                const char** headerNames) {
-    std::cout << "\n=== INTERCEPTED hiprtcCreateProgram ===\n";
-    
-    hiprtcResult result = get_real_hiprtcCreateProgram()(prog, src, name, 
-                                                        numHeaders, headers, headerNames);
-    
-    if (result == HIPRTC_SUCCESS && prog) {
-        rtc_program_sources[*prog] = src;
-        std::cout << "Stored RTC program source for handle " << *prog << std::endl;
     }
     
     return result;
