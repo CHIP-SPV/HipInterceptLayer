@@ -4,6 +4,14 @@
 #include <cmath>
 #include <chrono>
 #include <thread>
+#include <cstdlib>
+#include <algorithm>
+
+// Helper function to get number of diffs to show
+static int getNumDiffsToShow() {
+    const char* env = std::getenv("HIL_NUM_DIFF");
+    return env ? std::atoi(env) : 3;  // Default to 3 if not set
+}
 
 namespace hip_intercept {
 
@@ -305,13 +313,19 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
                     std::to_string(event1.execution_order) + "\n";
             }
             
-            if (op1.pre_state && op2.pre_state &&
+            if (op1.pre_state && op2.pre_state && 
                 (op1.pre_state->size != op2.pre_state->size ||
                  memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
                         op1.pre_state->size) != 0)) {
-                result.traces_match = false;
-                result.error_message += "Memory operation differs in pre-state at order " + 
-                    std::to_string(event1.execution_order) + "\n";
+                if (op1.pre_state->size != op2.pre_state->size) {
+                    result.traces_match = false;
+                    result.error_message += "Memory operation differs in pre-state at order " + 
+                        std::to_string(event1.execution_order) + "\n";
+                } else {
+                    result.traces_match = false;
+                    result.error_message += "Memory operation differs in pre-state at order " + 
+                        std::to_string(event1.execution_order) + "\n";
+                }
             }
         }
 
@@ -485,7 +499,35 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                     ss << "\n  - Pre-state size mismatch: " 
                        << op1.pre_state->size << " vs " << op2.pre_state->size;
                 } else {
-                    ss << "\n  - Pre-state data content differs";
+                    ss << "\n  - Pre-state data content differs:";
+                    
+                    // Compare data as floats
+                    const float* data1 = reinterpret_cast<const float*>(op1.pre_state->data.get());
+                    const float* data2 = reinterpret_cast<const float*>(op2.pre_state->data.get());
+                    size_t num_floats = op1.pre_state->size / sizeof(float);
+                    
+                    // Count total differences
+                    std::vector<std::pair<size_t, std::pair<float, float>>> diffs;
+                    for (size_t i = 0; i < num_floats; i++) {
+                        if (data1[i] != data2[i]) {
+                            diffs.push_back({i, {data1[i], data2[i]}});
+                        }
+                    }
+                    
+                    // Show limited number of differences
+                    int num_diffs = getNumDiffsToShow();
+                    size_t diffs_to_show = std::min(static_cast<size_t>(num_diffs), diffs.size());
+                    
+                    ss << " Found " << diffs.size() << " differences, showing first " 
+                       << diffs_to_show << ":\n";
+                    
+                    for (size_t i = 0; i < diffs_to_show; i++) {
+                        const auto& diff = diffs[i];
+                        ss << "    [" << diff.first << "]: " 
+                           << std::scientific << std::setprecision(6)
+                           << diff.second.first << " vs " << diff.second.second 
+                           << " (diff: " << std::abs(diff.second.first - diff.second.second) << ")\n";
+                    }
                 }
             }
 
