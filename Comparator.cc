@@ -7,13 +7,18 @@
 #include <cstdlib>
 #include <algorithm>
 
+namespace hip_intercept {
+
+namespace {
+    const char* RED = "\033[1;31m";
+    const char* RESET = "\033[0m";
+}
+
 // Helper function to get number of diffs to show
 static int getNumDiffsToShow() {
     const char* env = std::getenv("HIL_NUM_DIFF");
     return env ? std::atoi(env) : 3;  // Default to 3 if not set
 }
-
-namespace hip_intercept {
 
 // Helper function to get operation name
 static std::string getOperationName(MemoryOpType type) {
@@ -24,6 +29,13 @@ static std::string getOperationName(MemoryOpType type) {
         case MemoryOpType::ALLOC: return "hipMalloc";
         default: return "Unknown";
     }
+}
+
+// Helper function to get only diff flag
+static bool getOnlyDiffFlag() {
+    const char* env = std::getenv("HIL_ONLY_DIFF");
+    return env && (std::string(env) == "1" || std::string(env) == "ON" || 
+                  std::string(env) == "on" || std::string(env) == "true");
 }
 
 class ProgressBar {
@@ -356,12 +368,14 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
 }
 
 void Comparator::printComparisonResult(const ComparisonResult& result) {
-    if (result.traces_match) {
+    if (result.traces_match && !getOnlyDiffFlag()) {
         std::cout << "Traces match exactly!\n";
         return;
     }
     
-    std::cout << "Traces differ:\n";
+    if (!result.traces_match) {
+        std::cout << RED << "Traces differ:" << RESET << "\n";
+    }
     
     // Create a timeline of differences
     struct DifferenceEvent {
@@ -383,8 +397,11 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
     // Add kernel differences
     size_t kernel_idx = 0;
     for (const auto& kr : result.kernel_results) {
-        if (!kr.matches) {
+        if (!kr.matches || !getOnlyDiffFlag()) {
             std::stringstream ss;
+            if (!kr.matches) {
+                ss << RED;  // Start red color for differences
+            }
             ss << "\nOp#" << kr.execution_order << ": Kernel(" << kr.kernel_name << ")";
             
             if (!kr.differences.empty()) {
@@ -417,6 +434,10 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                 }
             }
             
+            if (!kr.matches) {
+                ss << RESET;  // Reset color after differences
+            }
+            
             uint64_t exec_order = result.trace1.kernel_executions[kernel_idx].execution_order;
             differences.emplace_back(DifferenceEvent::KERNEL, kernel_idx, ss.str(), exec_order);
         }
@@ -433,13 +454,16 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         const auto& op1 = result.trace1.memory_operations[i];
         const auto& op2 = result.trace2.memory_operations[i];
         
-        // Increment counter for this operation type
         size_t type_count = ++op_counters[op1.type];
         
-        if (op1.type != op2.type || op1.size != op2.size || 
-            (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind)) {
+        bool has_differences = (op1.type != op2.type || op1.size != op2.size || 
+            (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind));
             
+        if (has_differences || !getOnlyDiffFlag()) {
             std::stringstream ss;
+            if (has_differences) {
+                ss << RED;  // Start red color for differences
+            }
             ss << "\nOp#" << op1.execution_order << " (" 
                << getOperationName(op1.type) << " call #" << type_count << "): ";
             
@@ -464,40 +488,26 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
             }
             ss << ", stream=" << op2.stream << ")";
 
-            // Add differences section
-            ss << "\n  Differences:";
-            bool first_diff = true;
-
-            if (op1.type != op2.type) {
-                ss << " Type mismatch";
-                first_diff = false;
-            }
-            if (op1.size != op2.size) {
-                if (!first_diff) ss << ",";
-                ss << " Size mismatch";
-                first_diff = false;
-            }
-            if (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind) {
-                if (!first_diff) ss << ",";
-                ss << " Kind mismatch";
-                first_diff = false;
-            }
-            if (op1.stream != op2.stream) {
-                if (!first_diff) ss << ",";
-                ss << " Stream mismatch";
+            if (has_differences) {
+                ss << RESET;  // Reset color after differences
             }
 
             differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx, 
                 ss.str(), op1.execution_order);
         }
         
-        if ((op1.pre_state && !op2.pre_state) || (!op1.pre_state && op2.pre_state) ||
-            (op1.pre_state && op2.pre_state && 
-             (op1.pre_state->size != op2.pre_state->size ||
-              memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
-                     op1.pre_state->size) != 0))) {
-            
+        bool state_differences = ((op1.pre_state && !op2.pre_state) || 
+                                (!op1.pre_state && op2.pre_state) ||
+                                (op1.pre_state && op2.pre_state && 
+                                (op1.pre_state->size != op2.pre_state->size ||
+                                 memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
+                                        op1.pre_state->size) != 0)));
+                                        
+        if (state_differences || !getOnlyDiffFlag()) {
             std::stringstream ss;
+            if (state_differences) {
+                ss << RED;  // Start red color for differences
+            }
             ss << "\nOp#" << op1.execution_order << " (" 
                << getOperationName(op1.type) << " call #" << type_count << "): "
                << "Memory state mismatch in " << getOperationName(op1.type)
@@ -549,6 +559,10 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                            << " (diff: " << std::abs(diff.second.first - diff.second.second) << ")\n";
                     }
                 }
+            }
+
+            if (state_differences) {
+                ss << RESET;  // Reset color after differences
             }
 
             differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx,
