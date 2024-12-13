@@ -669,15 +669,6 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
  
     std::cout << "Looking up kernel: '" << kernel_name << "'" << std::endl;
     Kernel kernel = kernel_manager.getKernelByName(kernel_name);
-    if (kernel.name.empty()) {
-        // Try mangled name lookup
-        kernel = kernel_manager.getKernelByNameMangled(kernel_name);
-    }
-     
-    if (kernel.name.empty() || kernel.signature.empty()) {
-        std::cout << "Failed to find kernel info for " << kernel_name << std::endl;
-        std::abort();
-    }
      
     std::cout << "Using kernel signature: " << kernel.signature << std::endl;
      

@@ -1,6 +1,7 @@
 #include "Interceptor.hh"
 #include <regex>
 #include <iostream>
+#include "KernelManager.hh"
 
 KernelManager::KernelManager() {}
 KernelManager::~KernelManager() {}
@@ -20,19 +21,16 @@ void KernelManager::addFromModuleSource(const std::string& module_source) {
     while (it != end) {
         std::smatch match = *it;
         if (match.size() >= 3) {
-            Kernel kernel;
-            kernel.name = match[1].str();
-            kernel.signature = match[0].str();
+            Kernel kernel(match[0].str());
             kernel.source = module_source;
             
             // Add to kernels vector if not already present
             auto existing = std::find_if(kernels.begin(), kernels.end(),
-                [&](const Kernel& k) { return k.name == kernel.name; });
+                [&](const Kernel& k) { return k.signature == kernel.signature; });
                 
             if (existing == kernels.end()) {
                 kernels.push_back(kernel);
-                std::cout << "Added kernel: " << kernel.name 
-                         << " with signature: " << kernel.signature << std::endl;
+                std::cout << "Added kernel: " << kernel.signature << std::endl;
             }
         }
         ++it;
@@ -47,8 +45,7 @@ Kernel KernelManager::getKernelByName(const std::string& name) {
         return *it;
     }
     
-    // Return empty kernel if not found
-    return Kernel();
+    return getKernelByNameMangled(name);
 }
 
 Kernel KernelManager::getKernelByNameMangled(const std::string& name) {
@@ -60,5 +57,13 @@ Kernel KernelManager::getKernelByNameMangled(const std::string& name) {
     std::string kernel_name = pos != std::string::npos ? 
         demangled.substr(0, pos) : demangled;
         
-    return getKernelByName(kernel_name);
+    auto it = std::find_if(kernels.begin(), kernels.end(),
+        [&](const Kernel& k) { return k.name == kernel_name; });
+        
+    if (it == kernels.end()) {
+        std::cerr << "No kernel found with name: " << kernel_name << std::endl;
+        std::abort();
+    }
+    
+    return *it;
 } 
