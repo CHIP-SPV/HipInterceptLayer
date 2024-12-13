@@ -22,15 +22,15 @@ void KernelManager::addFromModuleSource(const std::string& module_source) {
         std::smatch match = *it;
         if (match.size() >= 3) {
             Kernel kernel(match[0].str());
-            kernel.source = module_source;
+            kernel.setModuleSource(module_source);
             
             // Add to kernels vector if not already present
             auto existing = std::find_if(kernels.begin(), kernels.end(),
-                [&](const Kernel& k) { return k.signature == kernel.signature; });
+                [&](const Kernel& k) { return k.getSignature() == kernel.getSignature(); });
                 
             if (existing == kernels.end()) {
                 kernels.push_back(kernel);
-                std::cout << "Added kernel: " << kernel.signature << std::endl;
+                std::cout << "Added kernel: " << kernel.getSignature() << std::endl;
             }
         }
         ++it;
@@ -39,7 +39,7 @@ void KernelManager::addFromModuleSource(const std::string& module_source) {
 
 Kernel KernelManager::getKernelByName(const std::string& name) {
     auto it = std::find_if(kernels.begin(), kernels.end(),
-        [&](const Kernel& k) { return k.name == name; });
+        [&](const Kernel& k) { return k.getName() == name; });
         
     if (it != kernels.end()) {
         return *it;
@@ -58,7 +58,7 @@ Kernel KernelManager::getKernelByNameMangled(const std::string& name) {
         demangled.substr(0, pos) : demangled;
         
     auto it = std::find_if(kernels.begin(), kernels.end(),
-        [&](const Kernel& k) { return k.name == kernel_name; });
+        [&](const Kernel& k) { return k.getName() == kernel_name; });
         
     if (it == kernels.end()) {
         std::cerr << "No kernel found with name: " << kernel_name << std::endl;

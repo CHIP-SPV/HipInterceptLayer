@@ -669,13 +669,12 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
  
     std::cout << "Looking up kernel: '" << kernel_name << "'" << std::endl;
     Kernel kernel = kernel_manager.getKernelByName(kernel_name);
-     
-    std::cout << "Using kernel signature: " << kernel.signature << std::endl;
+
      
     // Create execution record
     hip_intercept::KernelExecution exec;
     exec.function_address = f;
-    exec.kernel_name = kernel.name;
+    exec.kernel_name = kernel.getName();
     exec.grid_dim = {gridDimX, gridDimY, gridDimZ};
     exec.block_dim = {blockDimX, blockDimY, blockDimZ};
     exec.shared_mem = sharedMemBytes;
@@ -689,7 +688,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
         for (size_t i = 0; i < num_args; i++) {
             if (!kernelParams[i]) continue;
             
-            std::string arg_type = getArgTypeFromSignature(kernel.signature, i);
+            std::string arg_type = getArgTypeFromSignature(kernel.getSignature(), i);
             bool is_vector = isVectorType(arg_type);
             
             void* arg_ptr = nullptr;
