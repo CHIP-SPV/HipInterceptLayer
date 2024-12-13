@@ -2,6 +2,7 @@
 #define HIP_INTERCEPT_LAYER_INTERCEPTOR_HH
 
 #include "Tracer.hh"
+#include "KernelManager.hh"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -12,26 +13,6 @@ struct hipDeviceProp_t;
 
 // Use hip_intercept namespace
 using namespace hip_intercept;
-
-class Kernel {
-public:
-    std::string name;
-    std::string signature;
-    std::string source;
-    std::string binary;
-};
-
-class KernelManager {
-    std::vector<Kernel> kernels;
-public:
-    KernelManager();
-    ~KernelManager();
-    /// @brief Add kernels from a module source file using regex
-    /// @param module_source 
-    void addFromModuleSource(const std::string& module_source);
-    Kernel getKernelByName(const std::string& name);
-    Kernel getKernelByNameMangled(const std::string& name);
-};
 
 // GPU allocation tracking
 class AllocationInfo {
