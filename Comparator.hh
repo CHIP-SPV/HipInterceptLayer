@@ -75,6 +75,7 @@ private:
         const std::vector<MemoryChange>& changes2);
 
     bool compareFloats(float a, float b) const;
+    int getArgumentIndex(void* ptr, const std::vector<void*>& arg_ptrs) const;
 };
 
 } // namespace hip_intercept 

@@ -11,6 +11,8 @@ namespace hip_intercept {
 
 namespace {
     const char* RED = "\033[1;31m";
+    const char* YELLOW = "\033[1;33m";
+    const char* CYAN = "\033[1;36m";
     const char* RESET = "\033[0m";
 }
 
@@ -140,52 +142,29 @@ KernelComparisonResult Comparator::compareKernelExecutions(
     result.kernel_name = exec1.kernel_name;
     result.execution_order = exec1.execution_order;
     
-    if (exec1.kernel_name != exec2.kernel_name) {
-        result.matches = false;
-        result.differences.push_back("Kernel names differ: " + 
-            exec1.kernel_name + " vs " + exec2.kernel_name);
-    }
-    
-    if (exec1.grid_dim.x != exec2.grid_dim.x ||
-        exec1.grid_dim.y != exec2.grid_dim.y ||
-        exec1.grid_dim.z != exec2.grid_dim.z) {
-        result.matches = false;
-        result.differences.push_back("Grid dimensions differ");
-    }
-    
-    if (exec1.block_dim.x != exec2.block_dim.x ||
-        exec1.block_dim.y != exec2.block_dim.y ||
-        exec1.block_dim.z != exec2.block_dim.z) {
-        result.matches = false;
-        result.differences.push_back("Block dimensions differ");
-    }
-    
-    if (exec1.shared_mem != exec2.shared_mem) {
-        result.matches = false;
-        result.differences.push_back("Shared memory size differs");
-    }
-    
-    for (const auto& [arg_idx, changes1] : exec1.changes_by_arg) {
-        auto it = exec2.changes_by_arg.find(arg_idx);
-        if (it == exec2.changes_by_arg.end()) {
-            result.matches = false;
-            result.differences.push_back("Missing changes for argument " + 
-                std::to_string(arg_idx) + " in second trace");
-            continue;
-        }
-        
-        std::vector<MemoryChange> changes1_vec, changes2_vec;
-        for (const auto& [idx, vals] : changes1) {
-            changes1_vec.push_back({idx, vals.first, vals.second});
-        }
-        for (const auto& [idx, vals] : it->second) {
-            changes2_vec.push_back({idx, vals.first, vals.second});
-        }
-        
-        auto diff = compareMemoryChanges(changes1_vec, changes2_vec);
-        if (!diff.matches) {
-            result.matches = false;
-            result.value_differences[arg_idx] = diff;
+    // Compare post-execution states
+    for (const auto& [ptr, state1] : exec1.post_state) {
+        auto it = exec2.post_state.find(ptr);
+        if (it != exec2.post_state.end()) {
+            const auto& state2 = it->second;
+            if (state1.size == state2.size) {
+                // Compare as floats
+                const float* data1 = reinterpret_cast<const float*>(state1.data.get());
+                const float* data2 = reinterpret_cast<const float*>(state2.data.get());
+                size_t num_floats = state1.size / sizeof(float);
+                
+                for (size_t i = 0; i < num_floats; i++) {
+                    if (!compareFloats(data1[i], data2[i])) {
+                        result.matches = false;
+                        // Record the difference
+                        int arg_idx = getArgumentIndex(const_cast<void*>(ptr), exec1.arg_ptrs);
+                        if (arg_idx >= 0) {
+                            result.value_differences[arg_idx].post_value_mismatches.push_back(
+                                {i, data1[i], data2[i]});
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -397,13 +376,50 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
     // Add kernel differences
     size_t kernel_idx = 0;
     for (const auto& kr : result.kernel_results) {
+        // Add debug output
+        std::cout << "DEBUG: Checking kernel " << kr.kernel_name 
+                  << " matches=" << kr.matches 
+                  << " differences.size=" << kr.differences.size()
+                  << " value_differences.size=" << kr.value_differences.size() << std::endl;
+
         if (!kr.matches || !getOnlyDiffFlag()) {
             std::stringstream ss;
-            if (!kr.matches) {
+            bool has_differences = !kr.matches;  // Start with existing match status
+            
+            // Get kernel configuration from the original executions
+            const auto& exec1 = result.trace1.kernel_executions[kernel_idx];
+            const auto& exec2 = result.trace2.kernel_executions[kernel_idx];
+            
+            // Check if configurations differ
+            bool config_differs = (exec1.grid_dim.x != exec2.grid_dim.x || 
+                                 exec1.grid_dim.y != exec2.grid_dim.y || 
+                                 exec1.grid_dim.z != exec2.grid_dim.z || 
+                                 exec1.block_dim.x != exec2.block_dim.x || 
+                                 exec1.block_dim.y != exec2.block_dim.y || 
+                                 exec1.block_dim.z != exec2.block_dim.z || 
+                                 exec1.shared_mem != exec2.shared_mem);
+            
+            has_differences |= config_differs;  // Update difference status
+            
+            if (has_differences) {
                 ss << RED;  // Start red color for differences
             }
+            
             ss << "\nOp#" << kr.execution_order << ": Kernel(" << kr.kernel_name << ")";
             
+            // Always show kernel configuration (using first trace's values)
+            ss << "\n  Config: gridDim=(" << exec1.grid_dim.x << "," << exec1.grid_dim.y << "," << exec1.grid_dim.z 
+               << "), blockDim=(" << exec1.block_dim.x << "," << exec1.block_dim.y << "," << exec1.block_dim.z 
+               << "), shared=" << exec1.shared_mem;
+            
+            // If configurations differ, show both
+            if (config_differs) {
+                ss << "\n  vs: gridDim=(" << exec2.grid_dim.x << "," << exec2.grid_dim.y << "," << exec2.grid_dim.z 
+                   << "), blockDim=(" << exec2.block_dim.x << "," << exec2.block_dim.y << "," << exec2.block_dim.z 
+                   << "), shared=" << exec2.shared_mem;
+            }
+            
+            // Show configuration differences if any
             if (!kr.differences.empty()) {
                 ss << "\n  Config differences: " << kr.differences[0];
                 for (size_t i = 1; i < kr.differences.size(); i++) {
@@ -411,6 +427,7 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                 }
             }
             
+            // Add argument differences on new lines
             for (const auto& [arg_idx, diff] : kr.value_differences) {
                 if (!diff.pre_value_mismatches.empty() || 
                     !diff.post_value_mismatches.empty()) {
@@ -420,16 +437,16 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                         const auto& m = diff.pre_value_mismatches[0];
                         ss << diff.pre_value_mismatches.size() 
                            << " pre-exec diffs (first: idx " << m.index 
-                           << ": " << std::setprecision(6) << m.value1 
-                           << " vs " << m.value2 << ")";
+                           << ": " << YELLOW << std::setprecision(6) << m.value1 
+                           << RESET << " vs " << CYAN << m.value2 << RESET << ")";
                     }
                     if (!diff.post_value_mismatches.empty()) {
                         if (!diff.pre_value_mismatches.empty()) ss << ", ";
                         const auto& m = diff.post_value_mismatches[0];
                         ss << diff.post_value_mismatches.size() 
                            << " post-exec diffs (first: idx " << m.index 
-                           << ": " << std::setprecision(6) << m.value1 
-                           << " vs " << m.value2 << ")";
+                           << ": " << YELLOW << std::setprecision(6) << m.value1 
+                           << RESET << " vs " << CYAN << m.value2 << RESET << ")";
                     }
                 }
             }
@@ -460,123 +477,52 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         bool has_differences = (op1.type != op2.type || op1.size != op2.size || 
             (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind));
             
-        if (has_differences || !getOnlyDiffFlag()) {
-            std::stringstream ss;
-            if (has_differences) {
-                ss << RED;  // Start red color for differences
-            }
-            ss << "\nOp#" << op1.execution_order << " (" 
-               << getOperationName(op1.type) << " call #" << type_count << "): ";
-            
-            // Only show size, kind, and stream for operations (skip pointer values)
-            ss << memOpTypeToString(op1.type) << "(size=" << op1.size;
-            if (op1.type != MemoryOpType::ALLOC) {
-                ss << ", kind=" << memcpyKindToString(op1.kind);
-            }
-            ss << ", stream=" << op1.stream << ")";
-            
-            // For allocations, show first 3 values if available
-            if (op1.type == MemoryOpType::ALLOC) {
-                if (op1.pre_state && op1.pre_state->size >= 3 * sizeof(float)) {
-                    const float* data1 = reinterpret_cast<const float*>(op1.pre_state->data.get());
-                    ss << "  (" << std::scientific << std::setprecision(6)
-                       << data1[0] << "), " << data1[1] << ", " << data1[2];
-                }
-                if (op2.pre_state && op2.pre_state->size >= 3 * sizeof(float)) {
-                    const float* data2 = reinterpret_cast<const float*>(op2.pre_state->data.get());
-                    ss << "  (" << std::scientific << std::setprecision(6)
-                       << data2[0] << "), " << data2[1] << ", " << data2[2] << ")";
-                }
-            }
-
-            if (has_differences) {
-                // vs
-                ss << "\n  vs\n";
-                
-                // Second trace operation details (without pointer values)
-                ss << memOpTypeToString(op2.type) << "(size=" << op2.size;
-                if (op2.type != MemoryOpType::ALLOC) {
-                    ss << ", kind=" << memcpyKindToString(op2.kind);
-                }
-                ss << ", stream=" << op2.stream << ")";
-            }
-
-            if (has_differences) {
-                ss << RESET;  // Reset color after differences
-            }
-
-            differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx, 
-                ss.str(), op1.execution_order);
-        }
-        
-        // For memory state differences, only show content mismatches and skip ALLOC operations
-        bool state_differences = op1.type != MemoryOpType::ALLOC &&  // Skip ALLOC operations
-                               op1.pre_state && op2.pre_state && 
+        // Check for memory state differences
+        bool state_differences = op1.pre_state && op2.pre_state && 
                                (op1.pre_state->size != op2.pre_state->size ||
                                 memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
                                        op1.pre_state->size) != 0);
 
-        if (state_differences || (!getOnlyDiffFlag() && op1.type != MemoryOpType::ALLOC)) {
+        if (has_differences || state_differences || !getOnlyDiffFlag()) {
             std::stringstream ss;
-            if (state_differences) {
+            if (has_differences || state_differences) {
                 ss << RED;  // Start red color for differences
             }
+            
             ss << "\nOp#" << op1.execution_order << " (" 
                << getOperationName(op1.type) << " call #" << type_count << "): "
-               << "Memory state mismatch in " << getOperationName(op1.type)
-               << "(size=" << op1.size;  // Remove pointer values here too
+               << "(size=" << op1.size;
             if (op1.type != MemoryOpType::ALLOC) {
                 ss << ", kind=" << memcpyKindToString(op1.kind);
             }
             ss << ", stream=" << op1.stream << ")";
 
-            // Add specific details about the mismatch
-            if (op1.pre_state && !op2.pre_state) {
-                ss << "\n  - First trace has pre-state, second trace does not";
-            } else if (!op1.pre_state && op2.pre_state) {
-                ss << "\n  - Second trace has pre-state, first trace does not";
-            } else if (op1.pre_state && op2.pre_state) {
-                if (op1.pre_state->size != op2.pre_state->size) {
-                    ss << "\n  - Pre-state size mismatch: " 
-                       << op1.pre_state->size << " vs " << op2.pre_state->size;
-                } else {
-                    ss << "\n  - Pre-state data content differs:";
-                    
-                    // Compare data as floats
-                    const float* data1 = reinterpret_cast<const float*>(op1.pre_state->data.get());
-                    const float* data2 = reinterpret_cast<const float*>(op2.pre_state->data.get());
-                    size_t num_floats = op1.pre_state->size / sizeof(float);
-                    
-                    // Count total differences
-                    std::vector<std::pair<size_t, std::pair<float, float>>> diffs;
+            // Show values if there's a memory state mismatch
+            if (state_differences && op1.pre_state && op2.pre_state) {
+                const float* data1 = reinterpret_cast<const float*>(op1.pre_state->data.get());
+                const float* data2 = reinterpret_cast<const float*>(op2.pre_state->data.get());
+                size_t num_floats = std::min(3UL, op1.pre_state->size / sizeof(float));
+                
+                if (num_floats > 0) {
+                    ss << "  " << YELLOW << "[";  // Start yellow for first set
                     for (size_t i = 0; i < num_floats; i++) {
-                        if (data1[i] != data2[i]) {
-                            diffs.push_back({i, {data1[i], data2[i]}});
-                        }
+                        if (i > 0) ss << ", ";
+                        ss << data1[i];
                     }
-                    
-                    // Show limited number of differences
-                    int num_diffs = getNumDiffsToShow();
-                    size_t diffs_to_show = std::min(static_cast<size_t>(num_diffs), diffs.size());
-                    
-                    ss << " Found " << diffs.size() << " differences, showing first " 
-                       << diffs_to_show << ":\n";
-                    
-                    for (size_t i = 0; i < diffs_to_show; i++) {
-                        const auto& diff = diffs[i];
-                        ss << "    [" << diff.first << "]: " 
-                           << std::scientific << std::setprecision(6)
-                           << diff.second.first << " vs " << diff.second.second 
-                           << " (diff: " << std::abs(diff.second.first - diff.second.second) << ")\n";
+                    ss << "]" << RESET << " vs " << CYAN << "[";  // Switch to cyan for second set
+                    for (size_t i = 0; i < num_floats; i++) {
+                        if (i > 0) ss << ", ";
+                        ss << data2[i];
                     }
+                    ss << "]" << RESET;  // Reset color after values
                 }
             }
 
-            if (state_differences) {
+            if (has_differences || state_differences) {
                 ss << RESET;  // Reset color after differences
             }
 
-            differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx,
+            differences.emplace_back(DifferenceEvent::MEMORY, mem_op_idx, 
                 ss.str(), op1.execution_order);
         }
         
@@ -634,6 +580,13 @@ ComparisonResult Comparator::compare(const std::string& trace_path1, const std::
             {}, Trace{}, Trace{}};
         return result;
     }
+}
+
+int Comparator::getArgumentIndex(void* ptr, const std::vector<void*>& arg_ptrs) const {
+    for (size_t i = 0; i < arg_ptrs.size(); i++) {
+        if (arg_ptrs[i] == ptr) return static_cast<int>(i);
+    }
+    return -1;
 }
 
 } // namespace hip_intercept
