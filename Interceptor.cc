@@ -308,14 +308,19 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
 
+    auto kernel = kernel_manager.getKernelByName(kernelName);
+    assert(countKernelArgs(args) == kernel.getArguments().size());
+
     // Store argument pointers and capture pre-execution state
     if (args) {
         size_t num_args = countKernelArgs(args);
         for (size_t i = 0; i < num_args; i++) {
             if (!args[i]) continue;
+
+            auto kernelArg = kernel.getArguments()[i];
             
-            std::string arg_type = getArgTypeFromSignature(getKernelSignature(function_address), i);
-            bool is_vector = isVectorType(arg_type);
+            std::string arg_type = kernelArg.getType();
+            bool is_vector = kernelArg.isVector();
             
             void* arg_ptr = nullptr;
             size_t arg_size = 0;
@@ -366,48 +371,6 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     Tracer::instance().recordKernelLaunch(exec);
     
     return result;
-}
-
-// Finally define the kernel registry map
-static std::unordered_map<std::string, KernelInfo> kernel_registry;
-
-// When registering kernel arguments
-void registerKernelArg(const std::string& kernel_name, size_t arg_index, 
-                      bool is_vector, size_t size) {
-    auto& info = kernel_registry[kernel_name];
-    // Ensure the args vector is large enough
-    if (info.args.size() <= arg_index) {
-        info.args.resize(arg_index + 1);
-    }
-    info.args[arg_index].is_vector = is_vector;
-    info.args[arg_index].size = size;
-}
-
-// Add this to automatically register kernel arguments when first seen
-static void registerKernelIfNeeded(const std::string& kernel_name, const std::string& signature) {
-    if (kernel_registry.find(kernel_name) != kernel_registry.end()) {
-        return;  // Already registered
-    }
-    
-    // Parse signature to get argument types
-    size_t start = signature.find('(');
-    size_t end = signature.find(')');
-    if (start != std::string::npos && end != std::string::npos) {
-        std::string args_str = signature.substr(start + 1, end - start - 1);
-        std::stringstream ss(args_str);
-        std::string arg_type;
-        size_t arg_index = 0;
-        
-        while (std::getline(ss, arg_type, ',')) {
-            // Trim whitespace
-            arg_type.erase(0, arg_type.find_first_not_of(" "));
-            arg_type.erase(arg_type.find_last_not_of(" ") + 1);
-            
-            bool is_vector = isVectorType(arg_type);
-            size_t size = is_vector ? 16 : sizeof(void*);  // Use fixed size instead of float4
-            registerKernelArg(kernel_name, arg_index++, is_vector, size);
-        }
-    }
 }
 
 // Simplified function to find kernel signature
@@ -681,15 +644,32 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     exec.stream = stream;
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
- 
-    // Store argument pointers and capture pre-execution state
+
+
+    for (size_t i = 0; i < kernel.getArguments().size(); i++) {
+        exec.arg_ptrs.push_back(kernelParams[i]);
+        exec.arg_sizes.push_back(kernel.getArguments()[i].getSize());
+
+        // If the argument is a pointer and not a vector, capture the pre-execution state
+        if (!kernel.getArguments()[i].isVector() && kernel.getArguments()[i].getType().find("*") != std::string::npos) {
+            auto [base_ptr, info] = findContainingAllocation(kernelParams[i]);
+            if (base_ptr && info) {
+                createShadowCopy(base_ptr, *info);
+                exec.pre_state.emplace(base_ptr, 
+                    hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
+            }
+        }
+
+    }
+    /* old method for Store argument pointers and capture pre-execution state
     if (kernelParams) {
-        size_t num_args = countKernelArgs(kernelParams);
+        
         for (size_t i = 0; i < num_args; i++) {
             if (!kernelParams[i]) continue;
             
-            std::string arg_type = getArgTypeFromSignature(kernel.getSignature(), i);
-            bool is_vector = isVectorType(arg_type);
+            auto kernelArg = kernel.getArguments()[i];
+            std::string arg_type = kernelArg.getType();
+            bool is_vector = kernelArg.isVector();
             
             void* arg_ptr = nullptr;
             size_t arg_size = 0;
@@ -717,7 +697,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                 }
             }
         }
-    }
+    } */
 
     // Launch kernel
     hipError_t result = get_real_hipModuleLaunchKernel()(f, gridDimX, gridDimY, gridDimZ,

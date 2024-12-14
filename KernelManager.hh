@@ -12,12 +12,51 @@ class Argument {
 public:
     std::string name;
     std::string type;
-    std::string value;
-
+    size_t size;
+    bool is_pointer;
     Argument(std::string name, std::string type) {
         this->name = name;
         this->type = type;
-        std::cout << "    Argument: " << this->type << " " << this->name << std::endl;
+        this->size = isVector() ? 16 : sizeof(void*);
+        this->is_pointer = type.find("*") != std::string::npos;
+        std::cout << "    Argument: " << this->type << " " << this->name << " size: " << this->size << std::endl;
+    }
+
+    bool isPointer() const {
+        return is_pointer;
+    }
+
+    size_t getSize() const {
+        return size;
+    }
+
+    std::string getName() const {
+        return name;
+    }
+
+    bool isVector() {
+        static const std::vector<std::string> vector_types = {
+            "float4", "float3", "float2",
+            "int4", "int3", "int2",
+            "uint4", "uint3", "uint2",
+            "double4", "double3", "double2",
+            "long4", "long3", "long2",
+            "ulong4", "ulong3", "ulong2",
+            "char4", "char3", "char2",
+            "uchar4", "uchar3", "uchar2",
+            "HIP_vector_type"
+        };
+        
+        for (const auto& vtype : vector_types) {
+            if (type.find(vtype) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string getType() const {
+        return type;
     }
 };
 
@@ -27,6 +66,9 @@ class Kernel {
     std::string name;
     std::string signature;
     std::vector<Argument> arguments;
+
+
+
 
     void parseKernelSource() {
         if (moduleSource.empty() || name.empty()) {
@@ -106,23 +148,27 @@ class Kernel {
 
         // Extract the complete kernel source including signature and body
         kernelSource = moduleSource.substr(kernelStart, braceEnd - kernelStart + 1);
-        std::cout << "Kernel source:\n" << kernelSource << std::endl;
+        //std::cout << "Kernel source:\n" << kernelSource << std::endl;
     }
 public:
 
-    const std::string getName() const {
+    std::vector<Argument>getArguments() const {
+        return arguments;
+    }
+
+    std::string getName() const {
         return name;
     }
 
-    const std::string getSignature() const {
+    std::string getSignature() const {
         return signature;
     }
 
-    const std::string getSource() const {
+    std::string getSource() const {
         return kernelSource;
     }
 
-    const std::string getModuleSource() const {
+    std::string getModuleSource() const {
         return moduleSource;
     }
 
@@ -166,6 +212,11 @@ public:
             std::smatch match = *it;
             arguments.push_back(Argument(match[2].str(), match[1].str()));
             ++it;
+        }
+
+        std::cout << "Kernel arguments: " << arguments.size() << std::endl;
+        for(auto& arg : arguments) {
+            std::cout << "    Argument: " << arg.getType() << " " << arg.getName() << std::endl;
         }
     }
 };

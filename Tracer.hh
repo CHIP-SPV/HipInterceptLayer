@@ -128,9 +128,7 @@ public:
     Tracer& operator=(const Tracer&) = delete;
     Tracer(Tracer&&) = delete;
     Tracer& operator=(Tracer&&) = delete;
-    
-    void registerKernelArg(const std::string& kernel_name, size_t arg_index, 
-                          bool is_vector, size_t size);
+
     static Trace loadTrace(const std::string& path);
     
 private:
@@ -149,9 +147,7 @@ private:
     bool initialized_;
     static constexpr uint32_t TRACE_MAGIC = 0x48495054; // "HIPT"
     static constexpr uint32_t TRACE_VERSION = 1;
-    
-    std::unordered_map<std::string, KernelInfo> kernel_registry_;
-    
+        
     static KernelExecution readKernelExecution(std::ifstream& file);
     static MemoryOperation readMemoryOperation(std::ifstream& file);
     

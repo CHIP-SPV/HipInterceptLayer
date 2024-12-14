@@ -436,36 +436,6 @@ inline std::string getArgTypeFromSignature(const std::string& signature, size_t 
     return "";
 }
 
-struct KernelArgInfo {
-    bool is_vector;
-    size_t size;
-};
-
-struct KernelInfo {
-    std::vector<KernelArgInfo> args;
-};
-
-static bool isVectorType(const std::string& type_name) {
-    static const std::vector<std::string> vector_types = {
-        "float4", "float3", "float2",
-        "int4", "int3", "int2",
-        "uint4", "uint3", "uint2",
-        "double4", "double3", "double2",
-        "long4", "long3", "long2",
-        "ulong4", "ulong3", "ulong2",
-        "char4", "char3", "char2",
-        "uchar4", "uchar3", "uchar2",
-        "HIP_vector_type"
-    };
-    
-    for (const auto& vtype : vector_types) {
-        if (type_name.find(vtype) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
-}
-
 inline std::string getKernelName(const void* function_address) {
     // First find which object file contains this kernel
     auto object_file = getKernelObjectFile(function_address);

@@ -245,17 +245,6 @@ void Tracer::flush() {
     trace_file_.flush();
 }
 
-// Add Tracer method implementations
-void Tracer::registerKernelArg(const std::string& kernel_name, size_t arg_index, 
-                              bool is_vector, size_t size) {
-    auto& info = kernel_registry_[kernel_name];
-    if (info.args.size() <= arg_index) {
-        info.args.resize(arg_index + 1);
-    }
-    info.args[arg_index].is_vector = is_vector;
-    info.args[arg_index].size = size;
-}
-
 Trace Tracer::loadTrace(const std::string& path) {
     Trace trace;
     std::ifstream file(path, std::ios::binary);
