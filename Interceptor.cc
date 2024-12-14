@@ -559,7 +559,7 @@ hipError_t hipMalloc(void **ptr, size_t size) {
     op.dst = nullptr;  // Will be filled after allocation
     op.src = nullptr;
     op.size = size;
-    op.kind = hipMemcpyHostToHost;  // Set a default kind or remove this line entirely
+    op.kind = hipMemcpyHostToHost;
     static uint64_t op_count = 0;
     op.execution_order = op_count++;
     
@@ -567,7 +567,19 @@ hipError_t hipMalloc(void **ptr, size_t size) {
     
     if (result == hipSuccess && ptr && *ptr) {
         op.dst = *ptr;
-        gpu_allocations.emplace(*ptr, AllocationInfo(size));
+        
+        // First create the allocation info
+        auto& info = gpu_allocations.emplace(*ptr, AllocationInfo(size)).first->second;
+        
+        // Create and capture initial state
+        op.pre_state = std::make_shared<hip_intercept::MemoryState>(size);
+        op.post_state = std::make_shared<hip_intercept::MemoryState>(size);
+        
+        // Capture initial state of allocated memory
+        createShadowCopy(*ptr, info);
+        memcpy(op.pre_state->data.get(), info.shadow_copy.get(), size);
+        memcpy(op.post_state->data.get(), info.shadow_copy.get(), size);
+        
         std::cout << "Tracking GPU allocation at " << *ptr 
                   << " of size " << size << std::endl;
         Tracer::instance().recordMemoryOperation(op);

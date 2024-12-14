@@ -456,6 +456,7 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
         
         size_t type_count = ++op_counters[op1.type];
         
+        // Only consider differences in type, size, and kind (for non-ALLOC operations)
         bool has_differences = (op1.type != op2.type || op1.size != op2.size || 
             (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind));
             
@@ -467,26 +468,38 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
             ss << "\nOp#" << op1.execution_order << " (" 
                << getOperationName(op1.type) << " call #" << type_count << "): ";
             
-            // First trace operation details
-            ss << memOpTypeToString(op1.type) << "(dst=" << op1.dst 
-               << ", src=" << op1.src 
-               << ", size=" << op1.size;
+            // Only show size, kind, and stream for operations (skip pointer values)
+            ss << memOpTypeToString(op1.type) << "(size=" << op1.size;
             if (op1.type != MemoryOpType::ALLOC) {
                 ss << ", kind=" << memcpyKindToString(op1.kind);
             }
             ss << ", stream=" << op1.stream << ")";
             
-            // vs
-            ss << "\n  vs\n";
-            
-            // Second trace operation details
-            ss << memOpTypeToString(op2.type) << "(dst=" << op2.dst 
-               << ", src=" << op2.src 
-               << ", size=" << op2.size;
-            if (op2.type != MemoryOpType::ALLOC) {
-                ss << ", kind=" << memcpyKindToString(op2.kind);
+            // For allocations, show first 3 values if available
+            if (op1.type == MemoryOpType::ALLOC) {
+                if (op1.pre_state && op1.pre_state->size >= 3 * sizeof(float)) {
+                    const float* data1 = reinterpret_cast<const float*>(op1.pre_state->data.get());
+                    ss << "  (" << std::scientific << std::setprecision(6)
+                       << data1[0] << "), " << data1[1] << ", " << data1[2];
+                }
+                if (op2.pre_state && op2.pre_state->size >= 3 * sizeof(float)) {
+                    const float* data2 = reinterpret_cast<const float*>(op2.pre_state->data.get());
+                    ss << "  (" << std::scientific << std::setprecision(6)
+                       << data2[0] << "), " << data2[1] << ", " << data2[2] << ")";
+                }
             }
-            ss << ", stream=" << op2.stream << ")";
+
+            if (has_differences) {
+                // vs
+                ss << "\n  vs\n";
+                
+                // Second trace operation details (without pointer values)
+                ss << memOpTypeToString(op2.type) << "(size=" << op2.size;
+                if (op2.type != MemoryOpType::ALLOC) {
+                    ss << ", kind=" << memcpyKindToString(op2.kind);
+                }
+                ss << ", stream=" << op2.stream << ")";
+            }
 
             if (has_differences) {
                 ss << RESET;  // Reset color after differences
@@ -496,14 +509,14 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
                 ss.str(), op1.execution_order);
         }
         
-        bool state_differences = ((op1.pre_state && !op2.pre_state) || 
-                                (!op1.pre_state && op2.pre_state) ||
-                                (op1.pre_state && op2.pre_state && 
-                                (op1.pre_state->size != op2.pre_state->size ||
-                                 memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
-                                        op1.pre_state->size) != 0)));
-                                        
-        if (state_differences || !getOnlyDiffFlag()) {
+        // For memory state differences, only show content mismatches and skip ALLOC operations
+        bool state_differences = op1.type != MemoryOpType::ALLOC &&  // Skip ALLOC operations
+                               op1.pre_state && op2.pre_state && 
+                               (op1.pre_state->size != op2.pre_state->size ||
+                                memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(),
+                                       op1.pre_state->size) != 0);
+
+        if (state_differences || (!getOnlyDiffFlag() && op1.type != MemoryOpType::ALLOC)) {
             std::stringstream ss;
             if (state_differences) {
                 ss << RED;  // Start red color for differences
@@ -511,9 +524,7 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
             ss << "\nOp#" << op1.execution_order << " (" 
                << getOperationName(op1.type) << " call #" << type_count << "): "
                << "Memory state mismatch in " << getOperationName(op1.type)
-               << "(dst=" << op1.dst 
-               << ", src=" << op1.src 
-               << ", size=" << op1.size;
+               << "(size=" << op1.size;  // Remove pointer values here too
             if (op1.type != MemoryOpType::ALLOC) {
                 ss << ", kind=" << memcpyKindToString(op1.kind);
             }
