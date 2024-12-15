@@ -7,6 +7,7 @@
 #include <regex>
 #include <stack>
 #include "Util.hh"
+#include <fstream>
 
 
 class Argument {
@@ -58,6 +59,36 @@ public:
 
     std::string getType() const {
         return type;
+    }
+
+    void serialize(std::ofstream& file) const {
+        uint32_t name_len = name.length();
+        uint32_t type_len = type.length();
+        file.write(reinterpret_cast<const char*>(&name_len), sizeof(uint32_t));
+        file.write(reinterpret_cast<const char*>(&type_len), sizeof(uint32_t));
+        
+        file.write(name.c_str(), name_len);
+        file.write(type.c_str(), type_len);
+        
+        file.write(reinterpret_cast<const char*>(&size), sizeof(size_t));
+        file.write(reinterpret_cast<const char*>(&is_pointer), sizeof(bool));
+    }
+
+    static Argument deserialize(std::ifstream& file) {
+        uint32_t name_len, type_len;
+        file.read(reinterpret_cast<char*>(&name_len), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&type_len), sizeof(uint32_t));
+        
+        std::string name(name_len, '\0');
+        std::string type(type_len, '\0');
+        file.read(&name[0], name_len);
+        file.read(&type[0], type_len);
+        
+        Argument arg(name, type);
+        file.read(reinterpret_cast<char*>(&arg.size), sizeof(size_t));
+        file.read(reinterpret_cast<char*>(&arg.is_pointer), sizeof(bool));
+        
+        return arg;
     }
 };
 
@@ -180,6 +211,8 @@ public:
     Kernel() {}
 
     Kernel(std::string signature) {
+        std::cout << "\nParsing kernel signature: " << signature << std::endl;
+        
         // Trim whitespace from signature and normalize newlines
         this->signature = signature;
         
@@ -201,24 +234,74 @@ public:
             this->name.erase(0, this->name.find_first_not_of(" "));
             this->name.erase(this->name.find_last_not_of(" ") + 1);
         }
-        std::cout << "Kernel name: " << this->name << std::endl;
-        std::cout << "Kernel signature: " << this->signature << std::endl;
+        std::cout << "  Kernel name: " << this->name << std::endl;
+        std::cout << "  Kernel signature: " << this->signature << std::endl;
 
-        // Updated regex to handle more complex parameter formats
+        // Parse arguments
         std::regex arg_regex(R"((\w+(?:\s*\*\s*(?:__restrict__)?)?)\s+(\w+)(?:\s*,|\s*\)))");
         std::string args = signature.substr(nameEnd + 1);
         std::sregex_iterator it(args.begin(), args.end(), arg_regex);
         std::sregex_iterator end;
+        
+        std::cout << "  Parsing arguments..." << std::endl;
         while (it != end) {
             std::smatch match = *it;
             arguments.push_back(Argument(match[2].str(), match[1].str()));
             ++it;
         }
 
-        std::cout << "Kernel arguments: " << arguments.size() << std::endl;
-        for(auto& arg : arguments) {
-            std::cout << "    Argument: " << arg.getType() << " " << arg.getName() << std::endl;
+        std::cout << "  Found " << arguments.size() << " arguments" << std::endl;
+    }
+
+    void serialize(std::ofstream& file) const {
+        uint32_t kernel_source_len = kernelSource.length();
+        uint32_t module_source_len = moduleSource.length();
+        uint32_t name_len = name.length();
+        uint32_t signature_len = signature.length();
+        
+        file.write(reinterpret_cast<const char*>(&kernel_source_len), sizeof(uint32_t));
+        file.write(reinterpret_cast<const char*>(&module_source_len), sizeof(uint32_t));
+        file.write(reinterpret_cast<const char*>(&name_len), sizeof(uint32_t));
+        file.write(reinterpret_cast<const char*>(&signature_len), sizeof(uint32_t));
+        
+        file.write(kernelSource.c_str(), kernel_source_len);
+        file.write(moduleSource.c_str(), module_source_len);
+        file.write(name.c_str(), name_len);
+        file.write(signature.c_str(), signature_len);
+        
+        uint32_t num_args = arguments.size();
+        file.write(reinterpret_cast<const char*>(&num_args), sizeof(uint32_t));
+        for (const auto& arg : arguments) {
+            arg.serialize(file);
         }
+    }
+
+    static Kernel deserialize(std::ifstream& file) {
+        Kernel kernel;
+        
+        uint32_t kernel_source_len, module_source_len, name_len, signature_len;
+        file.read(reinterpret_cast<char*>(&kernel_source_len), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&module_source_len), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&name_len), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&signature_len), sizeof(uint32_t));
+        
+        kernel.kernelSource.resize(kernel_source_len);
+        kernel.moduleSource.resize(module_source_len);
+        kernel.name.resize(name_len);
+        kernel.signature.resize(signature_len);
+        
+        file.read(&kernel.kernelSource[0], kernel_source_len);
+        file.read(&kernel.moduleSource[0], module_source_len);
+        file.read(&kernel.name[0], name_len);
+        file.read(&kernel.signature[0], signature_len);
+        
+        uint32_t num_args;
+        file.read(reinterpret_cast<char*>(&num_args), sizeof(uint32_t));
+        for (uint32_t i = 0; i < num_args; i++) {
+            kernel.arguments.push_back(Argument::deserialize(file));
+        }
+        
+        return kernel;
     }
 };
 
@@ -234,12 +317,15 @@ public:
             return;
         }
 
+        std::cout << "Processing module source of length " << module_source.length() << std::endl;
+
         // Regex to match __global__ kernel declarations
         std::regex kernel_regex(R"(__global__\s+\w+\s+(\w+)\s*\(([^)]*)\))");
         
         std::sregex_iterator it(module_source.begin(), module_source.end(), kernel_regex);
         std::sregex_iterator end;
 
+        size_t kernels_found = 0;
         while (it != end) {
             std::smatch match = *it;
             if (match.size() >= 3) {
@@ -253,10 +339,13 @@ public:
                 if (existing == kernels.end()) {
                     kernels.push_back(kernel);
                     std::cout << "Added kernel: " << kernel.getSignature() << std::endl;
+                    kernels_found++;
                 }
             }
             ++it;
         }
+        
+        std::cout << "Found " << kernels_found << " new kernels in module source" << std::endl;
     }
 
     Kernel getKernelByName(const std::string& name) {
@@ -289,6 +378,30 @@ public:
         
         return *it;
     }
+
+    // Add direct serialization methods for use in trace file
+    void serialize(std::ofstream& file) const {
+        uint32_t num_kernels = kernels.size();
+        std::cout << "Serializing " << num_kernels << " kernels" << std::endl;
+        file.write(reinterpret_cast<const char*>(&num_kernels), sizeof(uint32_t));
+
+        for (const auto& kernel : kernels) {
+            kernel.serialize(file);
+        }
+    }
+
+    void deserialize(std::ifstream& file) {
+        uint32_t num_kernels;
+        file.read(reinterpret_cast<char*>(&num_kernels), sizeof(uint32_t));
+        std::cout << "Deserializing " << num_kernels << " kernels" << std::endl;
+
+        for (uint32_t i = 0; i < num_kernels; i++) {
+            kernels.push_back(Kernel::deserialize(file));
+        }
+        std::cout << "Successfully deserialized " << kernels.size() << " kernels" << std::endl;
+    }
+
+    size_t getNumKernels() const { return kernels.size(); }
 };
 
 #endif // HIP_INTERCEPT_LAYER_KERNEL_MANAGER_HH

@@ -2,6 +2,7 @@
 
 #include "Types.hh"
 #include "Util.hh"
+#include "KernelManager.hh"
 
 #ifndef HIP_INTERCEPT_LAYER_TRACER_HH
 #define HIP_INTERCEPT_LAYER_TRACER_HH
@@ -116,7 +117,10 @@ struct Trace {
 };
 
 class Tracer {
+    KernelManager kernel_manager_;
 public:
+    Trace trace_;
+
     static Tracer& instance();
     
     void recordKernelLaunch(const KernelExecution& exec);
@@ -129,16 +133,19 @@ public:
     Tracer(Tracer&&) = delete;
     Tracer& operator=(Tracer&&) = delete;
 
-    static Trace loadTrace(const std::string& path);
-    
-private:
-    Tracer(); // Private constructor for singleton
+    Tracer(const std::string& path); // Used for loading the trace from file
     ~Tracer();
     
+    void finalizeTrace(KernelManager& kernel_manager);
+private:
+    Tracer(); // Used for recording the trace
+
     void initializeTraceFile();
     void writeEvent(uint32_t type, const void* data, size_t size);
     void writeKernelExecution(const KernelExecution& exec);
     void writeMemoryOperation(const MemoryOperation& op);
+    void writeKernelManagerData();
+
     
     std::string getTraceFilePath() const;
     

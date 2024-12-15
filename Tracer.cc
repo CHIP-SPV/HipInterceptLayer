@@ -3,12 +3,9 @@
 namespace hip_intercept {
 
 // MemoryState implementation
-MemoryState::MemoryState(size_t s) : data(new char[s]), size(s) {
-    std::cout << "Creating MemoryState of size: " << s << " bytes\n";
-}
+MemoryState::MemoryState(size_t s) : data(new char[s]), size(s) {}
 
 MemoryState::MemoryState(const char* src, size_t s) : data(new char[s]), size(s) {
-    std::cout << "Creating MemoryState from source, size: " << s << " bytes\n";
     memcpy(data.get(), src, s);
 }
 
@@ -16,21 +13,17 @@ MemoryState::MemoryState() : size(0) {}
 
 // Tracer implementation
 Tracer& Tracer::instance() {
-    static Tracer instance;
-    return instance;
+    static Tracer instance_;
+    return instance_;
 }
 
-Tracer::Tracer() 
-    : initialized_(false)
+Tracer::Tracer() :
+    initialized_(false)
     , current_execution_order_(0) {
     initializeTraceFile();
 }
 
-Tracer::~Tracer() {
-    if (trace_file_.is_open()) {
-        trace_file_.close();
-    }
-}
+Tracer::~Tracer() {}
 
 void Tracer::initializeTraceFile() {
     if (initialized_) return;
@@ -44,7 +37,6 @@ void Tracer::initializeTraceFile() {
         return;
     }
     
-    // Add this more visible message
     std::cout << "\n=== HIP Trace File ===\n"
               << "Writing trace to: " << trace_path_ << "\n"
               << "===================\n\n";
@@ -55,8 +47,66 @@ void Tracer::initializeTraceFile() {
         uint32_t version = TRACE_VERSION;
     } header;
     
+    auto start_pos = trace_file_.tellp();
+    std::cout << "Starting file position: " << start_pos << std::endl;
+    
     trace_file_.write(reinterpret_cast<char*>(&header), sizeof(header));
+    
+    auto after_header_pos = trace_file_.tellp();
+    std::cout << "Position after main header: " << after_header_pos << std::endl;
+    
+    // Write kernel manager header with proper magic number and version
+    uint32_t kernel_magic = 0x4B524E4C;  // "KRNL"
+    uint32_t kernel_version = 1;
+    
+    std::cout << "Writing kernel manager header at position " << trace_file_.tellp() 
+              << " - Magic: 0x" << std::hex << kernel_magic 
+              << ", Version: " << std::dec << kernel_version << std::endl;
+              
+    trace_file_.write(reinterpret_cast<const char*>(&kernel_magic), sizeof(kernel_magic));
+    trace_file_.write(reinterpret_cast<const char*>(&kernel_version), sizeof(kernel_version));
+    
+    std::cout << "Position after kernel manager header: " << trace_file_.tellp() << std::endl;
+    
+    // Verify written data
+    trace_file_.flush();
+    
     initialized_ = true;
+}
+
+void Tracer::finalizeTrace(KernelManager& kernel_manager) {
+    if (!initialized_) return;
+    
+    std::cout << "Finalizing trace with " << kernel_manager.getNumKernels() << " kernels" << std::endl;
+    
+    // Remember current position
+    auto current_pos = trace_file_.tellp();
+    std::cout << "Current position before seeking: " << current_pos << std::endl;
+    
+    // Go back to kernel manager position (after main header)
+    trace_file_.seekp(sizeof(uint32_t) * 2);  // Skip trace header
+    auto seek_pos = trace_file_.tellp();
+    std::cout << "Seeked to position: " << seek_pos << std::endl;
+    
+    // Write kernel manager data
+    uint32_t kernel_magic = 0x4B524E4C;  // "KRNL"
+    uint32_t kernel_version = 1;
+    
+    std::cout << "Writing kernel manager header - Magic: 0x" 
+              << std::hex << kernel_magic 
+              << ", Version: " << std::dec << kernel_version << std::endl;
+    
+    trace_file_.write(reinterpret_cast<const char*>(&kernel_magic), sizeof(kernel_magic));
+    trace_file_.write(reinterpret_cast<const char*>(&kernel_version), sizeof(kernel_version));
+    
+    // Write kernel manager data
+    kernel_manager.serialize(trace_file_);
+    
+    // Return to previous position
+    trace_file_.seekp(current_pos);
+    std::cout << "Returned to position: " << trace_file_.tellp() << std::endl;
+    
+    trace_file_.flush();
 }
 
 void Tracer::recordKernelLaunch(const KernelExecution& exec) {
@@ -302,13 +352,17 @@ void Tracer::flush() {
     trace_file_.flush();
 }
 
-Trace Tracer::loadTrace(const std::string& path) {
-    Trace trace;
+Tracer::Tracer(const std::string& path) {
+    std::cout << "Loading trace from: " << path << std::endl;
     std::ifstream file(path, std::ios::binary);
     
     if (!file) {
+        std::cerr << "Failed to open trace file: " << path << std::endl;
         throw std::runtime_error("Failed to open trace file: " + path);
     }
+    
+    auto start_pos = file.tellg();
+    std::cout << "Starting read position: " << start_pos << std::endl;
     
     // Read and verify header
     struct {
@@ -317,11 +371,50 @@ Trace Tracer::loadTrace(const std::string& path) {
     } header;
     
     file.read(reinterpret_cast<char*>(&header), sizeof(header));
+    std::cout << "Position after reading main header: " << file.tellg() << std::endl;
+    
     if (header.magic != TRACE_MAGIC) {
+        std::cerr << "Invalid trace file format: incorrect magic number (0x" 
+                  << std::hex << header.magic << ", expected: 0x" << TRACE_MAGIC << ")" << std::endl;
         throw std::runtime_error("Invalid trace file format: incorrect magic number");
     }
     if (header.version != TRACE_VERSION) {
+        std::cerr << "Unsupported trace file version" << std::endl;
         throw std::runtime_error("Unsupported trace file version");
+    }
+    
+    std::cout << "Reading kernel manager data at position: " << file.tellg() << std::endl;
+    
+    // Read kernel manager header
+    uint32_t kernel_magic, kernel_version;
+    file.read(reinterpret_cast<char*>(&kernel_magic), sizeof(kernel_magic));
+    file.read(reinterpret_cast<char*>(&kernel_version), sizeof(kernel_version));
+    
+    std::cout << "Read kernel manager header at position " << file.tellg() 
+              << " - Magic: 0x" << std::hex << kernel_magic 
+              << ", Version: " << std::dec << kernel_version << std::endl;
+    
+    if (kernel_magic != 0x4B524E4C) {
+        std::cerr << "Invalid kernel manager format in trace (magic: 0x" 
+                  << std::hex << kernel_magic << ", expected: 0x4B524E4C)" << std::endl;
+        throw std::runtime_error("Invalid kernel manager format in trace");
+    }
+    if (kernel_version != 1) {
+        std::cerr << "Unsupported kernel manager version in trace: " 
+                  << kernel_version << " (expected: 1)" << std::endl;
+        throw std::runtime_error("Unsupported kernel manager version in trace");
+    }
+    
+    // Add debug output
+    std::cout << "Kernel manager header verified successfully" << std::endl;
+    
+    // Deserialize kernel manager
+    try {
+        kernel_manager_.deserialize(file);
+        std::cout << "Kernel manager deserialized successfully" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to deserialize kernel manager: " << e.what() << std::endl;
+        throw;
     }
     
     // Read events until end of file
@@ -338,17 +431,18 @@ Trace Tracer::loadTrace(const std::string& path) {
         
         switch (event_header.type) {
             case 1: // Kernel execution
-                trace.kernel_executions.push_back(readKernelExecution(file));
+                trace_.kernel_executions.push_back(readKernelExecution(file));
                 break;
             case 2: // Memory operation
-                trace.memory_operations.push_back(readMemoryOperation(file));
+                trace_.memory_operations.push_back(readMemoryOperation(file));
                 break;
             default:
-                throw std::runtime_error("Unknown event type in trace file");
+                std::cerr << "Unknown event type in trace file: " << event_header.type << std::endl;
+                std::abort();
         }
     }
     // Validate kernel execution states
-    for (const auto& exec : trace.kernel_executions) {
+    for (const auto& exec : trace_.kernel_executions) {
         if (exec.pre_state.empty()) {
             throw std::runtime_error("Invalid trace: kernel execution missing pre-state");
         }
@@ -370,7 +464,7 @@ Trace Tracer::loadTrace(const std::string& path) {
     }
 
     // Validate memory operation states 
-    for (const auto& op : trace.memory_operations) {
+    for (const auto& op : trace_.memory_operations) {
         if (op.pre_state && op.pre_state->size == 0) {
             throw std::runtime_error("Invalid trace: memory operation has pre-state with size 0");
         }
@@ -378,7 +472,6 @@ Trace Tracer::loadTrace(const std::string& path) {
             throw std::runtime_error("Invalid trace: memory operation has post-state with size 0");
         }
     }
-    return trace;
 }
 
 KernelExecution Tracer::readKernelExecution(std::ifstream& file) {

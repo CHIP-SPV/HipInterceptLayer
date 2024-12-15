@@ -825,4 +825,9 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
     return result;
 }
 
+void __attribute__((destructor)) hip_intercept_cleanup() {
+    std::cout << "Finalizing trace" << std::endl;
+    Tracer::instance().finalizeTrace(kernel_manager);
+}
+
 } // extern "C"

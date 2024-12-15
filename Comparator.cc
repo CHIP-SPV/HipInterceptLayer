@@ -142,13 +142,6 @@ ValueDifference compareMemoryStates(
     ValueDifference diff;
     diff.matches = true;
 
-    // Add detailed debugging
-    std::cout << "\nDEBUG: Comparing memory states:"
-              << "\n  States1 size: " << states1.size()
-              << "\n  States2 size: " << states2.size()
-              << "\n  Ptrs1 size: " << ptrs1.size()
-              << "\n  Ptrs2 size: " << ptrs2.size() << std::endl;
-
     // First check if we have the same number of states
     if (states1.size() != states2.size()) {
         std::cerr << "ERROR: Number of states mismatch!" << std::endl;
@@ -160,15 +153,6 @@ ValueDifference compareMemoryStates(
     for (size_t i = 0; i < states1.size(); i++) {
         const auto& state1 = states1[i];
         const auto& state2 = states2[i];
-
-        // Add detailed state debugging
-        std::cout << "\nDEBUG: Checking state pair " << i 
-                  << "\n  State1: size=" << state1.size 
-                  << ", data=" << (state1.data ? "valid" : "null")
-                  << "\n  State2: size=" << state2.size
-                  << ", data=" << (state2.data ? "valid" : "null")
-                  << "\n  Ptr1: " << ptrs1[i]
-                  << "\n  Ptr2: " << ptrs2[i] << std::endl;
 
         // Abort if we find invalid states
         if (!state1.data || state1.size == 0) {
@@ -212,17 +196,6 @@ KernelComparisonResult compareKernelExecution(
     result.kernel_name = exec1.kernel_name;
     result.execution_order = exec1.execution_order;
 
-    // Add detailed kernel execution debugging
-    std::cout << "\nDEBUG: Comparing kernel executions for " << exec1.kernel_name
-              << "\n  Exec1:"
-              << "\n    Pre-states: " << exec1.pre_state.size()
-              << "\n    Post-states: " << exec1.post_state.size()
-              << "\n    Args: " << exec1.arg_ptrs.size()
-              << "\n  Exec2:"
-              << "\n    Pre-states: " << exec2.pre_state.size()
-              << "\n    Post-states: " << exec2.post_state.size()
-              << "\n    Args: " << exec2.arg_ptrs.size() << std::endl;
-
     // Abort if we detect missing states
     if (exec1.pre_state.empty() || exec1.post_state.empty()) {
         std::cerr << "FATAL: Missing states in exec1" << std::endl;
@@ -249,7 +222,6 @@ KernelComparisonResult compareKernelExecution(
     }
 
     // Compare pre-states
-    std::cout << "\nDEBUG: Comparing pre-states..." << std::endl;
     auto pre_diff = compareMemoryStates(
         exec1.pre_state, exec2.pre_state,
         exec1.arg_ptrs, exec2.arg_ptrs);
@@ -263,7 +235,6 @@ KernelComparisonResult compareKernelExecution(
     }
 
     // Compare post-states
-    std::cout << "\nDEBUG: Comparing post-states..." << std::endl;
     auto post_diff = compareMemoryStates(
         exec1.post_state, exec2.post_state,
         exec1.arg_ptrs, exec2.arg_ptrs);
@@ -484,11 +455,6 @@ void Comparator::printComparisonResult(const ComparisonResult& result) {
     // Add kernel differences
     size_t kernel_idx = 0;
     for (const auto& kr : result.kernel_results) {
-        // Add debug output
-        std::cout << "DEBUG: Checking kernel " << kr.kernel_name 
-                  << " matches=" << kr.matches 
-                  << " differences.size=" << kr.differences.size()
-                  << " value_differences.size=" << kr.value_differences.size() << std::endl;
 
         if (!kr.matches || !getOnlyDiffFlag()) {
             std::stringstream ss;
@@ -654,9 +620,9 @@ ComparisonResult Comparator::compare(const std::string& trace_path1, const std::
     try {
         // Load traces first
         auto load_start = std::chrono::steady_clock::now();
-        Trace t1 = Tracer::loadTrace(trace_path1);
+        Tracer t1(trace_path1);
         auto load_mid = std::chrono::steady_clock::now();
-        Trace t2 = Tracer::loadTrace(trace_path2);
+        Tracer t2(trace_path2);
         auto load_end = std::chrono::steady_clock::now();
 
         auto load1_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -668,7 +634,7 @@ ComparisonResult Comparator::compare(const std::string& trace_path1, const std::
         std::cout << "Loaded trace 2 in " << load2_duration << "ms" << std::endl;
         
         // Create result with loaded traces
-        ComparisonResult result{false, SIZE_MAX, "", {}, std::move(t1), std::move(t2)};
+        ComparisonResult result{false, SIZE_MAX, "", {}, std::move(t1.trace_), std::move(t2.trace_)};
         result.traces_match = true;
         
         // Compare the loaded traces
