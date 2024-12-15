@@ -15,7 +15,7 @@ include_directories(${HIP_INCLUDE_DIRS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # Build libraries and executable
-add_library(HIPIntercept SHARED Interceptor.cc KernelManager.cc Tracer.cc)
+add_library(HIPIntercept SHARED Interceptor.cc Tracer.cc)
 add_executable(HipInterceptCompare Comparator.cc Tracer.cc)
 
 # Installation rules

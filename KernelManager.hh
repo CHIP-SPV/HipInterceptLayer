@@ -6,6 +6,7 @@
 #include <iostream>
 #include <regex>
 #include <stack>
+#include "Util.hh"
 
 
 class Argument {
@@ -224,13 +225,70 @@ public:
 class KernelManager {
     std::vector<Kernel> kernels;
 public:
-    KernelManager();
-    ~KernelManager();
-    /// @brief Add kernels from a module source file using regex
-    /// @param module_source 
-    void addFromModuleSource(const std::string& module_source);
-    Kernel getKernelByName(const std::string& name);
-    Kernel getKernelByNameMangled(const std::string& name);
+    KernelManager() {}
+    ~KernelManager() {}
+
+    void addFromModuleSource(const std::string& module_source) {
+        if (module_source.empty()) {
+            std::cout << "Empty source provided to KernelManager" << std::endl;
+            return;
+        }
+
+        // Regex to match __global__ kernel declarations
+        std::regex kernel_regex(R"(__global__\s+\w+\s+(\w+)\s*\(([^)]*)\))");
+        
+        std::sregex_iterator it(module_source.begin(), module_source.end(), kernel_regex);
+        std::sregex_iterator end;
+
+        while (it != end) {
+            std::smatch match = *it;
+            if (match.size() >= 3) {
+                Kernel kernel(match[0].str());
+                kernel.setModuleSource(module_source);
+                
+                // Add to kernels vector if not already present
+                auto existing = std::find_if(kernels.begin(), kernels.end(),
+                    [&](const Kernel& k) { return k.getSignature() == kernel.getSignature(); });
+                    
+                if (existing == kernels.end()) {
+                    kernels.push_back(kernel);
+                    std::cout << "Added kernel: " << kernel.getSignature() << std::endl;
+                }
+            }
+            ++it;
+        }
+    }
+
+    Kernel getKernelByName(const std::string& name) {
+        auto it = std::find_if(kernels.begin(), kernels.end(),
+            [&](const Kernel& k) { return k.getName() == name; });
+            
+        if (it != kernels.end()) {
+            return *it;
+        }
+        
+        return getKernelByNameMangled(name);
+    }
+
+    Kernel getKernelByNameMangled(const std::string& name) {
+        // Try to demangle the name first
+        std::string demangled = demangle(name);
+        
+        // Extract just the kernel name from the demangled signature
+        size_t pos = demangled.find('(');
+        std::string kernel_name = pos != std::string::npos ? 
+            demangled.substr(0, pos) : demangled;
+            
+        auto it = std::find_if(kernels.begin(), kernels.end(),
+            [&](const Kernel& k) { return k.getName() == kernel_name; });
+            
+        if (it == kernels.end()) {
+            std::cerr << "No kernel found with name: " << kernel_name << std::endl;
+            std::abort();
+        }
+        
+        return *it;
+    }
 };
 
 #endif // HIP_INTERCEPT_LAYER_KERNEL_MANAGER_HH
