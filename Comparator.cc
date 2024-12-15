@@ -133,7 +133,77 @@ ValueDifference Comparator::compareMemoryChanges(
     return diff;
 }
 
-KernelComparisonResult Comparator::compareKernelExecutions(
+ValueDifference compareMemoryStates(
+    const std::vector<MemoryState>& states1,
+    const std::vector<MemoryState>& states2,
+    const std::vector<void*>& ptrs1,
+    const std::vector<void*>& ptrs2) {
+    
+    ValueDifference diff;
+    diff.matches = true;
+
+    // Add detailed debugging
+    std::cout << "\nDEBUG: Comparing memory states:"
+              << "\n  States1 size: " << states1.size()
+              << "\n  States2 size: " << states2.size()
+              << "\n  Ptrs1 size: " << ptrs1.size()
+              << "\n  Ptrs2 size: " << ptrs2.size() << std::endl;
+
+    // First check if we have the same number of states
+    if (states1.size() != states2.size()) {
+        std::cerr << "ERROR: Number of states mismatch!" << std::endl;
+        diff.matches = false;
+        return diff;
+    }
+
+    // Compare each state pair
+    for (size_t i = 0; i < states1.size(); i++) {
+        const auto& state1 = states1[i];
+        const auto& state2 = states2[i];
+
+        // Add detailed state debugging
+        std::cout << "\nDEBUG: Checking state pair " << i 
+                  << "\n  State1: size=" << state1.size 
+                  << ", data=" << (state1.data ? "valid" : "null")
+                  << "\n  State2: size=" << state2.size
+                  << ", data=" << (state2.data ? "valid" : "null")
+                  << "\n  Ptr1: " << ptrs1[i]
+                  << "\n  Ptr2: " << ptrs2[i] << std::endl;
+
+        // Abort if we find invalid states
+        if (!state1.data || state1.size == 0) {
+            std::cerr << "FATAL: Invalid state1 detected at index " << i << std::endl;
+            std::abort();
+        }
+        if (!state2.data || state2.size == 0) {
+            std::cerr << "FATAL: Invalid state2 detected at index " << i << std::endl;
+            std::abort();
+        }
+
+        // Check if sizes match
+        if (state1.size != state2.size) {
+            std::cerr << "ERROR: Size mismatch at index " << i << std::endl;
+            diff.matches = false;
+            continue;
+        }
+
+        // Compare values
+        for (size_t j = 0; j < state1.size; j += sizeof(float)) {
+            float* val1 = (float*)(state1.data.get() + j);
+            float* val2 = (float*)(state2.data.get() + j);
+
+            if (*val1 != *val2) {
+                diff.matches = false;
+                diff.pre_value_mismatches.push_back({j/sizeof(float), *val1, *val2});
+                diff.value_mismatches.push_back({j/sizeof(float), *val1, *val2});
+            }
+        }
+    }
+
+    return diff;
+}
+
+KernelComparisonResult compareKernelExecution(
     const KernelExecution& exec1,
     const KernelExecution& exec2) {
     
@@ -141,33 +211,71 @@ KernelComparisonResult Comparator::compareKernelExecutions(
     result.matches = true;
     result.kernel_name = exec1.kernel_name;
     result.execution_order = exec1.execution_order;
+
+    // Add detailed kernel execution debugging
+    std::cout << "\nDEBUG: Comparing kernel executions for " << exec1.kernel_name
+              << "\n  Exec1:"
+              << "\n    Pre-states: " << exec1.pre_state.size()
+              << "\n    Post-states: " << exec1.post_state.size()
+              << "\n    Args: " << exec1.arg_ptrs.size()
+              << "\n  Exec2:"
+              << "\n    Pre-states: " << exec2.pre_state.size()
+              << "\n    Post-states: " << exec2.post_state.size()
+              << "\n    Args: " << exec2.arg_ptrs.size() << std::endl;
+
+    // Abort if we detect missing states
+    if (exec1.pre_state.empty() || exec1.post_state.empty()) {
+        std::cerr << "FATAL: Missing states in exec1" << std::endl;
+        std::abort();
+    }
+    if (exec2.pre_state.empty() || exec2.post_state.empty()) {
+        std::cerr << "FATAL: Missing states in exec2" << std::endl;
+        std::abort();
+    }
+
+    // Compare basic properties
+    if (exec1.kernel_name != exec2.kernel_name ||
+        exec1.grid_dim.x != exec2.grid_dim.x ||
+        exec1.grid_dim.y != exec2.grid_dim.y ||
+        exec1.grid_dim.z != exec2.grid_dim.z ||
+        exec1.block_dim.x != exec2.block_dim.x ||
+        exec1.block_dim.y != exec2.block_dim.y ||
+        exec1.block_dim.z != exec2.block_dim.z ||
+        exec1.shared_mem != exec2.shared_mem) {
+        
+        result.matches = false;
+        result.differences.push_back("Kernel launch parameters differ");
+        return result;
+    }
+
+    // Compare pre-states
+    std::cout << "\nDEBUG: Comparing pre-states..." << std::endl;
+    auto pre_diff = compareMemoryStates(
+        exec1.pre_state, exec2.pre_state,
+        exec1.arg_ptrs, exec2.arg_ptrs);
     
-    // Compare post-execution states
-    for (const auto& [ptr, state1] : exec1.post_state) {
-        auto it = exec2.post_state.find(ptr);
-        if (it != exec2.post_state.end()) {
-            const auto& state2 = it->second;
-            if (state1.size == state2.size) {
-                // Compare as floats
-                const float* data1 = reinterpret_cast<const float*>(state1.data.get());
-                const float* data2 = reinterpret_cast<const float*>(state2.data.get());
-                size_t num_floats = state1.size / sizeof(float);
-                
-                for (size_t i = 0; i < num_floats; i++) {
-                    if (!compareFloats(data1[i], data2[i])) {
-                        result.matches = false;
-                        // Record the difference
-                        int arg_idx = getArgumentIndex(const_cast<void*>(ptr), exec1.arg_ptrs);
-                        if (arg_idx >= 0) {
-                            result.value_differences[arg_idx].post_value_mismatches.push_back(
-                                {i, data1[i], data2[i]});
-                        }
-                    }
-                }
-            }
+    if (!pre_diff.matches) {
+        result.matches = false;
+        result.differences.push_back("Pre-execution memory states differ");
+        for (size_t i = 0; i < exec1.arg_ptrs.size(); i++) {
+            result.value_differences[i].pre_value_mismatches = pre_diff.pre_value_mismatches;
         }
     }
+
+    // Compare post-states
+    std::cout << "\nDEBUG: Comparing post-states..." << std::endl;
+    auto post_diff = compareMemoryStates(
+        exec1.post_state, exec2.post_state,
+        exec1.arg_ptrs, exec2.arg_ptrs);
     
+    if (!post_diff.matches) {
+        result.matches = false;
+        result.differences.push_back("Post-execution memory states differ");
+        for (size_t i = 0; i < exec1.arg_ptrs.size(); i++) {
+            result.value_differences[i].post_value_mismatches = post_diff.pre_value_mismatches;
+        }
+    }
+
     return result;
 }
 
@@ -274,7 +382,7 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
         }
 
         if (event1.type == TimelineEvent::KERNEL) {
-            auto kernel_result = compareKernelExecutions(
+            auto kernel_result = compareKernelExecution(
                 trace1.kernel_executions[event1.index],
                 trace2.kernel_executions[event2.index]
             );

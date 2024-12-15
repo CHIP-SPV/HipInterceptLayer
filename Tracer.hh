@@ -87,8 +87,8 @@ struct KernelExecution {
     hipStream_t stream;
     uint64_t execution_order;
     
-    std::map<void*, MemoryState> pre_state;
-    std::map<void*, MemoryState> post_state;
+    std::vector<MemoryState> pre_state;
+    std::vector<MemoryState> post_state;
     std::vector<std::pair<void*, size_t>> changes;
     std::vector<void*> arg_ptrs;
     std::vector<size_t> arg_sizes;

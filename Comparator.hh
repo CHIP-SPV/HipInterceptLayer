@@ -28,6 +28,7 @@ struct ValueDifference {
     std::vector<size_t> missing_indices;
     std::vector<ValueMismatch> pre_value_mismatches;
     std::vector<ValueMismatch> post_value_mismatches;
+    std::vector<ValueMismatch> value_mismatches;
 };
 
 // Structure to hold kernel comparison results

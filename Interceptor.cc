@@ -173,28 +173,30 @@ static int getArgumentIndex(void* ptr, const std::vector<void*>& arg_ptrs) {
 }
 
 static void recordMemoryChanges(hip_intercept::KernelExecution& exec) {
-    for (const auto& [ptr, pre] : exec.pre_state) {
-        const auto& post = exec.post_state[ptr];
+    for (size_t i = 0; i < exec.pre_state.size(); i++) {
+        const auto& pre = exec.pre_state[i];
+        const auto& post = exec.post_state[i];
+        void* ptr = exec.arg_ptrs[i];
         
         // For output arguments (arg2 in MatrixMul), record all values
         int arg_idx = getArgumentIndex(ptr, exec.arg_ptrs);
         if (arg_idx == 2) {  // Output matrix C
             // Record all values for output arguments
-            for (size_t i = 0; i < pre.size; i += sizeof(float)) {
-                exec.changes.push_back({(char*)ptr + i, i});
-                float* pre_val = (float*)(pre.data.get() + i);
-                float* post_val = (float*)(post.data.get() + i);
-                exec.changes_by_arg[arg_idx].push_back({i/sizeof(float), {*pre_val, *post_val}});
+            for (size_t j = 0; j < pre.size; j += sizeof(float)) {
+                exec.changes.push_back({(char*)ptr + j, j});
+                float* pre_val = (float*)(pre.data.get() + j);
+                float* post_val = (float*)(post.data.get() + j);
+                exec.changes_by_arg[arg_idx].push_back({j/sizeof(float), {*pre_val, *post_val}});
             }
         } else {
             // For input arguments, only record actual changes
-            for (size_t i = 0; i < pre.size; i += sizeof(float)) {
-                float* pre_val = (float*)(pre.data.get() + i);
-                float* post_val = (float*)(post.data.get() + i);
+            for (size_t j = 0; j < pre.size; j += sizeof(float)) {
+                float* pre_val = (float*)(pre.data.get() + j);
+                float* post_val = (float*)(post.data.get() + j);
                 
                 if (*pre_val != *post_val) {
-                    exec.changes.push_back({(char*)ptr + i, i});
-                    exec.changes_by_arg[arg_idx].push_back({i/sizeof(float), {*pre_val, *post_val}});
+                    exec.changes.push_back({(char*)ptr + j, j});
+                    exec.changes_by_arg[arg_idx].push_back({j/sizeof(float), {*pre_val, *post_val}});
                 }
             }
         }
@@ -285,12 +287,7 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
 static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlocks,
                                      dim3 dimBlocks, void **args, size_t sharedMemBytes,
                                      hipStream_t stream) {
-    std::cout << "hipLaunchKernel(\n"
-              << "    function=" << function_address 
-              << "\n    numBlocks=" << dim3ToString(numBlocks)
-              << "\n    dimBlocks=" << dim3ToString(dimBlocks)
-              << "\n    sharedMem=" << sharedMemBytes
-              << "\n    stream=" << (void*)stream << "\n";
+    std::cout << "\nDEBUG: hipLaunchKernel_impl for function " << function_address << std::endl;
               
     // Get kernel name and print args using Tracer
     std::string kernelName = getKernelName(function_address);
@@ -311,44 +308,45 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     auto kernel = kernel_manager.getKernelByName(kernelName);
     assert(countKernelArgs(args) == kernel.getArguments().size());
 
-    // Store argument pointers and capture pre-execution state
-    if (args) {
-        size_t num_args = countKernelArgs(args);
-        for (size_t i = 0; i < num_args; i++) {
-            if (!args[i]) continue;
+    std::cout << "\nDEBUG: Processing kernel arguments:"
+              << "\n  Total args: " << kernel.getArguments().size() << std::endl;
 
-            auto kernelArg = kernel.getArguments()[i];
+    const auto& arguments = kernel.getArguments();
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        void* param_value = args[i];
+        
+        std::cout << "DEBUG: Processing arg " << i 
+                  << "\n  Type: " << arg.getType()
+                  << "\n  Is pointer: " << arg.isPointer() << std::endl;
+        
+        if (arg.isPointer() && !arg.isVector()) {
+            void* device_ptr = *(void**)param_value;
+            exec.arg_ptrs.push_back(device_ptr);
             
-            std::string arg_type = kernelArg.getType();
-            bool is_vector = kernelArg.isVector();
+            std::cout << "DEBUG: Found pointer argument:"
+                      << "\n  Device ptr: " << device_ptr << std::endl;
             
-            void* arg_ptr = nullptr;
-            size_t arg_size = 0;
-            
-            if (is_vector) {
-                arg_ptr = args[i];
-                arg_size = 16;  // HIP_vector_type size
-            } else if (arg_type.find("*") != std::string::npos) {
-                arg_ptr = *(void**)args[i];
-                arg_size = sizeof(void*);
+            auto [base_ptr, info] = findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "DEBUG: Creating shadow copy for arg " << i
+                          << "\n  Base ptr: " << base_ptr
+                          << "\n  Size: " << info->size << std::endl;
+                          
+                createShadowCopy(base_ptr, *info);
+                exec.pre_state.emplace_back(info->shadow_copy.get(), info->size);
             } else {
-                arg_ptr = args[i];
-                arg_size = 16;
+                std::cerr << "WARNING: Could not find allocation for arg " << i
+                          << " ptr: " << device_ptr << std::endl;
             }
-            
-            exec.arg_ptrs.push_back(arg_ptr);
-            exec.arg_sizes.push_back(arg_size);
-            
-            if (!is_vector && arg_type.find("*") != std::string::npos) {
-                auto [base_ptr, info] = findContainingAllocation(arg_ptr);
-                if (base_ptr && info) {
-                    createShadowCopy(base_ptr, *info);
-                    exec.pre_state.emplace(base_ptr, 
-                        hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
-                }
-            }
+        } else {
+            exec.arg_ptrs.push_back(param_value);
         }
     }
+
+    std::cout << "DEBUG: Pre-launch state:"
+              << "\n  Pre-states: " << exec.pre_state.size()
+              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
 
     // Launch kernel
     hipError_t result = get_real_hipLaunchKernel()(function_address, numBlocks, 
@@ -356,14 +354,27 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     (void)get_real_hipDeviceSynchronize()();
     
     // Capture post-execution state
-    for (const auto& [ptr, pre_state] : exec.pre_state) {
-        auto [base_ptr, info] = findContainingAllocation(ptr);
+    std::cout << "DEBUG: Capturing post-execution state..." << std::endl;
+    
+    for (size_t i = 0; i < exec.arg_ptrs.size(); i++) {
+        void* device_ptr = exec.arg_ptrs[i];
+        auto [base_ptr, info] = findContainingAllocation(device_ptr);
         if (base_ptr && info) {
+            std::cout << "DEBUG: Creating post-exec shadow copy for arg " << i
+                      << "\n  Base ptr: " << base_ptr
+                      << "\n  Size: " << info->size << std::endl;
+                      
             createShadowCopy(base_ptr, *info);
-            exec.post_state.emplace(ptr, 
-                hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
+            exec.post_state.emplace_back(info->shadow_copy.get(), info->size);
+        } else {
+            std::cerr << "WARNING: Could not find allocation for post-state arg " << i
+                      << " ptr: " << device_ptr << std::endl;
         }
     }
+
+    std::cout << "DEBUG: Post-launch state:"
+              << "\n  Post-states: " << exec.post_state.size()
+              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
 
     recordMemoryChanges(exec);
     
@@ -656,35 +667,49 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
 
+    std::cout << "\nDEBUG: Processing kernel arguments:"
+              << "\n  Total args: " << kernel.getArguments().size() << std::endl;
+
     // Modified parameter handling
-    const auto& arguments = kernel.getArguments(); // Store reference to avoid dangling pointers
+    const auto& arguments = kernel.getArguments();
     for (size_t i = 0; i < arguments.size(); i++) {
-        const auto& arg = arguments[i];  // Now references the stored vector
+        const auto& arg = arguments[i];
         void* param_value = kernelParams[i];
+        
+        std::cout << "DEBUG: Processing arg " << i 
+                  << "\n  Type: " << arg.getType()
+                  << "\n  Is pointer: " << arg.isPointer() << std::endl;
         
         // For pointer types, we need to dereference kernelParams[i] to get the actual pointer
         if (arg.getType().find("*") != std::string::npos && !arg.isVector()) {
             void* device_ptr = *(void**)param_value;
             exec.arg_ptrs.push_back(device_ptr);
             
+            std::cout << "DEBUG: Found pointer argument:"
+                      << "\n  Device ptr: " << device_ptr << std::endl;
+            
             // Try to capture pre-execution state
             auto [base_ptr, info] = findContainingAllocation(device_ptr);
             if (base_ptr && info) {
-                std::cout << "Capturing pre-state for argument " << i 
-                          << " at address " << device_ptr 
-                          << " (base: " << base_ptr << ")" << std::endl;
+                std::cout << "DEBUG: Creating shadow copy for arg " << i
+                          << "\n  Base ptr: " << base_ptr
+                          << "\n  Size: " << info->size << std::endl;
                           
                 createShadowCopy(base_ptr, *info);
-                exec.pre_state.emplace(base_ptr, 
-                    hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
+                exec.pre_state.emplace_back(info->shadow_copy.get(), info->size);
+            } else {
+                std::cerr << "WARNING: Could not find allocation for arg " << i
+                          << " ptr: " << device_ptr << std::endl;
             }
         } else {
             // For non-pointer types, store the parameter address directly
             exec.arg_ptrs.push_back(param_value);
         }
-        
-        exec.arg_sizes.push_back(arg.getSize());
     }
+
+    std::cout << "DEBUG: Pre-launch state:"
+              << "\n  Pre-states: " << exec.pre_state.size()
+              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
 
     // Launch kernel
     hipError_t result = get_real_hipModuleLaunchKernel()(f, gridDimX, gridDimY, gridDimZ,
@@ -693,23 +718,31 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                                         kernelParams, extra);
     (void)get_real_hipDeviceSynchronize()();
     
-    // Capture post-execution state for pointer arguments
+    // Capture post-execution state
+    std::cout << "DEBUG: Capturing post-execution state..." << std::endl;
+    
     for (size_t i = 0; i < arguments.size(); i++) {
         const auto& arg = arguments[i];
         if (arg.getType().find("*") != std::string::npos && !arg.isVector()) {
             void* device_ptr = *(void**)kernelParams[i];
             auto [base_ptr, info] = findContainingAllocation(device_ptr);
             if (base_ptr && info) {
-                std::cout << "Capturing post-state for argument " << i 
-                          << " at address " << device_ptr 
-                          << " (base: " << base_ptr << ")" << std::endl;
+                std::cout << "DEBUG: Creating post-exec shadow copy for arg " << i
+                          << "\n  Base ptr: " << base_ptr
+                          << "\n  Size: " << info->size << std::endl;
                           
                 createShadowCopy(base_ptr, *info);
-                exec.post_state.emplace(base_ptr, 
-                    hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
+                exec.post_state.emplace_back(info->shadow_copy.get(), info->size);
+            } else {
+                std::cerr << "WARNING: Could not find allocation for post-state arg " << i
+                          << " ptr: " << device_ptr << std::endl;
             }
         }
     }
+
+    std::cout << "DEBUG: Post-launch state:"
+              << "\n  Post-states: " << exec.post_state.size()
+              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
 
     recordMemoryChanges(exec);
     Tracer::instance().recordKernelLaunch(exec);

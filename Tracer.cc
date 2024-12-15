@@ -66,13 +66,15 @@ void Tracer::recordKernelLaunch(const KernelExecution& exec) {
     size_t total_pre_states = 0;
     size_t total_post_states = 0;
     
-    for (const auto& [ptr, state] : exec.pre_state) {
+    // Count valid pre-states
+    for (const auto& state : exec.pre_state) {
         if (state.data && state.size > 0) {
             total_pre_states++;
         }
     }
     
-    for (const auto& [ptr, state] : exec.post_state) {
+    // Count valid post-states
+    for (const auto& state : exec.post_state) {
         if (state.data && state.size > 0) {
             total_post_states++;
         }
@@ -136,6 +138,8 @@ void Tracer::writeKernelExecution(const KernelExecution& exec) {
         hipStream_t stream;
         uint64_t execution_order;
         uint32_t num_args;
+        uint32_t num_pre_states;
+        uint32_t num_post_states;
         uint32_t num_changes;
     } kernel_data = {
         exec.function_address,
@@ -146,6 +150,8 @@ void Tracer::writeKernelExecution(const KernelExecution& exec) {
         exec.stream,
         exec.execution_order,
         static_cast<uint32_t>(exec.arg_ptrs.size()),
+        static_cast<uint32_t>(exec.pre_state.size()),
+        static_cast<uint32_t>(exec.post_state.size()),
         0  // Will count total changes below
     };
     
@@ -163,6 +169,26 @@ void Tracer::writeKernelExecution(const KernelExecution& exec) {
     for (void* ptr : exec.arg_ptrs) {
         trace_file_.write(reinterpret_cast<const char*>(&ptr), sizeof(void*));
     }
+
+    // Write pre-states
+    for (const auto& state : exec.pre_state) {
+        // Write state size
+        trace_file_.write(reinterpret_cast<const char*>(&state.size), sizeof(size_t));
+        // Write state data
+        if (state.data && state.size > 0) {
+            trace_file_.write(state.data.get(), state.size);
+        }
+    }
+
+    // Write post-states
+    for (const auto& state : exec.post_state) {
+        // Write state size
+        trace_file_.write(reinterpret_cast<const char*>(&state.size), sizeof(size_t));
+        // Write state data
+        if (state.data && state.size > 0) {
+            trace_file_.write(state.data.get(), state.size);
+        }
+    }
     
     // Write memory changes
     for (const auto& [arg_idx, changes] : exec.changes_by_arg) {
@@ -178,8 +204,7 @@ void Tracer::writeKernelExecution(const KernelExecution& exec) {
                 values.first,
                 values.second
             };
-            trace_file_.write(reinterpret_cast<const char*>(&change_data), 
-                            sizeof(change_data));
+            trace_file_.write(reinterpret_cast<const char*>(&change_data), sizeof(change_data));
         }
     }
 }
@@ -322,7 +347,37 @@ Trace Tracer::loadTrace(const std::string& path) {
                 throw std::runtime_error("Unknown event type in trace file");
         }
     }
-    
+    // Validate kernel execution states
+    for (const auto& exec : trace.kernel_executions) {
+        if (exec.pre_state.empty()) {
+            throw std::runtime_error("Invalid trace: kernel execution missing pre-state");
+        }
+        if (exec.post_state.empty()) {
+            throw std::runtime_error("Invalid trace: kernel execution missing post-state"); 
+        }
+        
+        for (const auto& state : exec.pre_state) {
+            if (state.size == 0) {
+                throw std::runtime_error("Invalid trace: kernel execution has pre-state with size 0");
+            }
+        }
+        
+        for (const auto& state : exec.post_state) {
+            if (state.size == 0) {
+                throw std::runtime_error("Invalid trace: kernel execution has post-state with size 0");
+            }
+        }
+    }
+
+    // Validate memory operation states 
+    for (const auto& op : trace.memory_operations) {
+        if (op.pre_state && op.pre_state->size == 0) {
+            throw std::runtime_error("Invalid trace: memory operation has pre-state with size 0");
+        }
+        if (op.post_state && op.post_state->size == 0) {
+            throw std::runtime_error("Invalid trace: memory operation has post-state with size 0");
+        }
+    }
     return trace;
 }
 
@@ -338,6 +393,8 @@ KernelExecution Tracer::readKernelExecution(std::ifstream& file) {
         hipStream_t stream;
         uint64_t execution_order;
         uint32_t num_args;
+        uint32_t num_pre_states;
+        uint32_t num_post_states;
         uint32_t num_changes;
     } kernel_data;
     
@@ -361,6 +418,30 @@ KernelExecution Tracer::readKernelExecution(std::ifstream& file) {
         void* arg_ptr;
         file.read(reinterpret_cast<char*>(&arg_ptr), sizeof(void*));
         exec.arg_ptrs.push_back(arg_ptr);
+    }
+
+    // Read pre-states
+    for (uint32_t i = 0; i < kernel_data.num_pre_states; i++) {
+        size_t state_size;
+        file.read(reinterpret_cast<char*>(&state_size), sizeof(size_t));
+        
+        MemoryState state(state_size);
+        if (state_size > 0) {
+            file.read(state.data.get(), state_size);
+        }
+        exec.pre_state.push_back(std::move(state));
+    }
+
+    // Read post-states
+    for (uint32_t i = 0; i < kernel_data.num_post_states; i++) {
+        size_t state_size;
+        file.read(reinterpret_cast<char*>(&state_size), sizeof(size_t));
+        
+        MemoryState state(state_size);
+        if (state_size > 0) {
+            file.read(state.data.get(), state_size);
+        }
+        exec.post_state.push_back(std::move(state));
     }
     
     // Read memory changes
