@@ -673,43 +673,6 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
         }
 
     }
-    /* old method for Store argument pointers and capture pre-execution state
-    if (kernelParams) {
-        
-        for (size_t i = 0; i < num_args; i++) {
-            if (!kernelParams[i]) continue;
-            
-            auto kernelArg = kernel.getArguments()[i];
-            std::string arg_type = kernelArg.getType();
-            bool is_vector = kernelArg.isVector();
-            
-            void* arg_ptr = nullptr;
-            size_t arg_size = 0;
-            
-            if (is_vector) {
-                arg_ptr = kernelParams[i];
-                arg_size = 16;  // HIP_vector_type size
-            } else if (arg_type.find("*") != std::string::npos) {
-                arg_ptr = *(void**)kernelParams[i];
-                arg_size = sizeof(void*);
-            } else {
-                arg_ptr = kernelParams[i];
-                arg_size = 16;
-            }
-            
-            exec.arg_ptrs.push_back(arg_ptr);
-            exec.arg_sizes.push_back(arg_size);
-            
-            if (!is_vector && arg_type.find("*") != std::string::npos) {
-                auto [base_ptr, info] = findContainingAllocation(arg_ptr);
-                if (base_ptr && info) {
-                    createShadowCopy(base_ptr, *info);
-                    exec.pre_state.emplace(base_ptr, 
-                        hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
-                }
-            }
-        }
-    } */
 
     // Launch kernel
     hipError_t result = get_real_hipModuleLaunchKernel()(f, gridDimX, gridDimY, gridDimZ,
