@@ -3,9 +3,12 @@
 namespace hip_intercept {
 
 // MemoryState implementation
-MemoryState::MemoryState(size_t s) : data(new char[s]), size(s) {}
+MemoryState::MemoryState(size_t s) : data(new char[s]), size(s) {
+    std::cout << "Creating MemoryState of size: " << s << " bytes\n";
+}
 
 MemoryState::MemoryState(const char* src, size_t s) : data(new char[s]), size(s) {
+    std::cout << "Creating MemoryState from source, size: " << s << " bytes\n";
     memcpy(data.get(), src, s);
 }
 
@@ -59,6 +62,30 @@ void Tracer::initializeTraceFile() {
 void Tracer::recordKernelLaunch(const KernelExecution& exec) {
     if (!initialized_) return;
     
+    // Add debug assertions for pre/post states
+    size_t total_pre_states = 0;
+    size_t total_post_states = 0;
+    
+    for (const auto& [ptr, state] : exec.pre_state) {
+        if (state.data && state.size > 0) {
+            total_pre_states++;
+        }
+    }
+    
+    for (const auto& [ptr, state] : exec.post_state) {
+        if (state.data && state.size > 0) {
+            total_post_states++;
+        }
+    }
+    
+    if (total_pre_states == 0 || total_post_states == 0) {
+        std::cerr << "\nWARNING: Kernel '" << exec.kernel_name 
+                  << "' has no memory states captured!\n"
+                  << "Pre states: " << total_pre_states 
+                  << ", Post states: " << total_post_states << "\n"
+                  << "Number of arguments: " << exec.arg_ptrs.size() << "\n\n";
+    }
+    
     // Assign execution order
     KernelExecution ordered_exec = exec;
     ordered_exec.execution_order = current_execution_order_++;
@@ -94,6 +121,11 @@ void Tracer::writeEvent(uint32_t type, const void* data, size_t size) {
 }
 
 void Tracer::writeKernelExecution(const KernelExecution& exec) {
+    // Add debug output for memory states
+    std::cout << "\nWriting kernel execution for: " << exec.kernel_name << "\n";
+    std::cout << "Pre-state entries: " << exec.pre_state.size() << "\n";
+    std::cout << "Post-state entries: " << exec.post_state.size() << "\n";
+    
     // Serialize kernel execution data
     struct {
         void* function_address;

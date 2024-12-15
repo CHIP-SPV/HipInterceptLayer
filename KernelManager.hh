@@ -34,7 +34,7 @@ public:
         return name;
     }
 
-    bool isVector() {
+    bool isVector() const {
         static const std::vector<std::string> vector_types = {
             "float4", "float3", "float2",
             "int4", "int3", "int2",

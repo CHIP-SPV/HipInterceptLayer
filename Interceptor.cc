@@ -645,7 +645,6 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     std::cout << "Looking up kernel: '" << kernel_name << "'" << std::endl;
     Kernel kernel = kernel_manager.getKernelByName(kernel_name);
 
-     
     // Create execution record
     hip_intercept::KernelExecution exec;
     exec.function_address = f;
@@ -657,21 +656,34 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
 
-
-    for (size_t i = 0; i < kernel.getArguments().size(); i++) {
-        exec.arg_ptrs.push_back(kernelParams[i]);
-        exec.arg_sizes.push_back(kernel.getArguments()[i].getSize());
-
-        // If the argument is a pointer and not a vector, capture the pre-execution state
-        if (!kernel.getArguments()[i].isVector() && kernel.getArguments()[i].getType().find("*") != std::string::npos) {
-            auto [base_ptr, info] = findContainingAllocation(kernelParams[i]);
+    // Modified parameter handling
+    const auto& arguments = kernel.getArguments(); // Store reference to avoid dangling pointers
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];  // Now references the stored vector
+        void* param_value = kernelParams[i];
+        
+        // For pointer types, we need to dereference kernelParams[i] to get the actual pointer
+        if (arg.getType().find("*") != std::string::npos && !arg.isVector()) {
+            void* device_ptr = *(void**)param_value;
+            exec.arg_ptrs.push_back(device_ptr);
+            
+            // Try to capture pre-execution state
+            auto [base_ptr, info] = findContainingAllocation(device_ptr);
             if (base_ptr && info) {
+                std::cout << "Capturing pre-state for argument " << i 
+                          << " at address " << device_ptr 
+                          << " (base: " << base_ptr << ")" << std::endl;
+                          
                 createShadowCopy(base_ptr, *info);
                 exec.pre_state.emplace(base_ptr, 
                     hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
             }
+        } else {
+            // For non-pointer types, store the parameter address directly
+            exec.arg_ptrs.push_back(param_value);
         }
-
+        
+        exec.arg_sizes.push_back(arg.getSize());
     }
 
     // Launch kernel
@@ -681,19 +693,25 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                                         kernelParams, extra);
     (void)get_real_hipDeviceSynchronize()();
     
-    // Capture post-execution state
-    for (const auto& [ptr, pre_state] : exec.pre_state) {
-        auto [base_ptr, info] = findContainingAllocation(ptr);
-        if (base_ptr && info) {
-            createShadowCopy(base_ptr, *info);
-            exec.post_state.emplace(ptr, 
-                hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
+    // Capture post-execution state for pointer arguments
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        if (arg.getType().find("*") != std::string::npos && !arg.isVector()) {
+            void* device_ptr = *(void**)kernelParams[i];
+            auto [base_ptr, info] = findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "Capturing post-state for argument " << i 
+                          << " at address " << device_ptr 
+                          << " (base: " << base_ptr << ")" << std::endl;
+                          
+                createShadowCopy(base_ptr, *info);
+                exec.post_state.emplace(base_ptr, 
+                    hip_intercept::MemoryState(info->shadow_copy.get(), info->size));
+            }
         }
     }
 
     recordMemoryChanges(exec);
-    
-    // Record kernel execution using Tracer
     Tracer::instance().recordKernelLaunch(exec);
     
     return result;
