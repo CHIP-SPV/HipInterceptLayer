@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find HIP package and set up include paths
 find_package(HIP CONFIG REQUIRED)
+find_package(GTest REQUIRED)
+
 message(STATUS "HIP_DIR: ${HIP_DIR}")
 message(STATUS "HIP_LIBRARIES: ${HIP_LIBRARIES}")
 message(STATUS "HIP_INCLUDE_DIRS: ${HIP_INCLUDE_DIRS}")
@@ -17,6 +19,18 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 # Build libraries and executable
 add_library(HIPIntercept SHARED Interceptor.cc Tracer.cc)
 add_executable(HipInterceptCompare Comparator.cc Tracer.cc)
+
+# Add test executable
+add_executable(unit_tests
+  tests/testKernelManager.cpp
+)
+
+target_link_libraries(unit_tests
+  PRIVATE
+  GTest::GTest
+  GTest::Main
+  HIPIntercept
+)
 
 # Installation rules
 include(GNUInstallDirs)
@@ -34,3 +48,8 @@ install(FILES
     Comparator.hh
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hip-intercept
 )
+
+enable_testing()
+gtest_discover_tests(unit_tests)
+
+

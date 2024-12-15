@@ -37,23 +37,6 @@ void printKernelArgs(void** args, const std::string& kernelName, const void* fun
 std::string getKernelSignature(const void* function_address);
 std::string getKernelName(const void* function_address);
 
-
-inline std::string demangle(const std::string& mangled_name) {
-    int status;
-    char* demangled = abi::__cxa_demangle(mangled_name.c_str(), nullptr, nullptr, &status);
-    
-    std::string result;
-    if (status == 0 && demangled) {
-        result = demangled;
-        free(demangled);
-    } else {
-        result = mangled_name;  // Return original if demangling fails
-    }
-    
-    std::cout << "Demangled " << mangled_name << " to " << result << std::endl;
-    return result;
-}
-
 inline size_t countKernelArgs(void** args) {
     if (!args) return 0;
     
