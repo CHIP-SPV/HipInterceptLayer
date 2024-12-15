@@ -443,7 +443,7 @@ public:
         std::cout << "Found " << kernels_found << " new kernels in module source" << std::endl;
     }
 
-    Kernel getKernelByName(const std::string& name) {
+    Kernel getKernelByName(const std::string& name) const {
         auto it = std::find_if(kernels.begin(), kernels.end(),
             [&](const Kernel& k) { return k.getName() == name; });
             
@@ -454,7 +454,7 @@ public:
         return getKernelByNameMangled(name);
     }
 
-    Kernel getKernelByNameMangled(const std::string& name) {
+    Kernel getKernelByNameMangled(const std::string& name) const {
         // Try to demangle the name first
         std::string demangled = demangle(name);
         
