@@ -135,7 +135,7 @@ public:
     Tracer(Tracer&&) = delete;
     Tracer& operator=(Tracer&&) = delete;
 
-    Tracer(const std::string& path, bool skip_deserialization = false); // Used for loading the trace from file
+    Tracer(const std::string& path); // Used for loading the trace from file
     ~Tracer() { std::cout << "Tracer destructor called" << std::endl; finalizeTrace(); }
     
     void finalizeTrace();
@@ -154,8 +154,6 @@ private:
     std::ofstream trace_file_;
     std::string trace_path_;
     bool initialized_;
-    static constexpr uint32_t TRACE_MAGIC = 0x48495054; // "HIPT"
-    static constexpr uint32_t TRACE_VERSION = 1;
         
     static KernelExecution readKernelExecution(std::ifstream& file);
     static MemoryOperation readMemoryOperation(std::ifstream& file);

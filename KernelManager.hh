@@ -8,6 +8,9 @@
 #include <stack>
 #include <fstream>
 
+const uint32_t KRNL_MAGIC = 0x4B524E4C;
+const uint32_t KRNL_VERSION = 1;
+
 inline std::string demangle(const std::string& mangled_name) {
     int status;
     char* demangled = abi::__cxa_demangle(mangled_name.c_str(), nullptr, nullptr, &status);
@@ -83,8 +86,8 @@ public:
         uint32_t name_len = name.length();
         uint32_t type_len = type.length();
         
-        std::cout << "Serializing argument - Name: '" << name << "' (len=" << name_len 
-                  << "), Type: '" << type << "' (len=" << type_len << ")" << std::endl;
+        //std::cout << "Serializing argument - Name: '" << name << "' (len=" << name_len 
+        //          << "), Type: '" << type << "' (len=" << type_len << ")" << std::endl;
         
         file.write(reinterpret_cast<const char*>(&name_len), sizeof(uint32_t));
         file.write(reinterpret_cast<const char*>(&type_len), sizeof(uint32_t));
@@ -405,6 +408,33 @@ class KernelManager {
 public:
     KernelManager() {}
     ~KernelManager() {}
+
+    void writeKernelManagerHeader(std::ofstream& file) {
+        std::cout << "Writing kernel manager header at position " << file.tellp();
+        std::cout << " - Magic: 0x" << std::hex << KRNL_MAGIC << ", Version: " << std::dec << KRNL_VERSION << std::endl;
+        uint32_t magic = KRNL_MAGIC;  // KRNL
+        uint32_t version = KRNL_VERSION;
+        file.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+        file.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    }
+
+    void readKernelManagerHeader(std::ifstream& file) {
+        uint32_t magic;
+        uint32_t version;
+        file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        file.read(reinterpret_cast<char*>(&version), sizeof(version));
+        std::cout << "Reading kernel manager header at position " << file.tellg();
+        std::cout << " - Magic: 0x" << std::hex << magic << ", Version: " << std::dec << version << std::endl;
+        if (magic != KRNL_MAGIC) {
+            std::cerr << "Invalid kernel manager format in trace (magic: 0x" 
+                      << std::hex << magic << ", expected: 0x" << KRNL_MAGIC << ")" << std::endl;
+            throw std::runtime_error("Invalid kernel manager format in trace");
+        }
+        if (version != KRNL_VERSION) {
+            std::cerr << "Unsupported kernel manager version in trace" << std::endl;
+            throw std::runtime_error("Unsupported kernel manager version in trace");
+        }
+    }
 
     void addFromModuleSource(const std::string& module_source) {
         if (module_source.empty()) {

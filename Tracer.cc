@@ -38,37 +38,10 @@ void Tracer::initializeTraceFile() {
     std::cout << "\n=== HIP Trace File ===\n"
               << "Writing trace to: " << trace_path_ << "\n"
               << "===================\n\n";
-    
-    // Write header
-    struct {
-        uint32_t magic = TRACE_MAGIC;
-        uint32_t version = TRACE_VERSION;
-    } header;
-    
-    auto start_pos = trace_file_.tellp();
-    std::cout << "Starting file position: " << start_pos << std::endl;
-    
-    trace_file_.write(reinterpret_cast<char*>(&header), sizeof(header));
-    
-    auto after_header_pos = trace_file_.tellp();
-    std::cout << "Position after main header: " << after_header_pos << std::endl;
-    
-    // Write kernel manager header with proper magic number and version
-    uint32_t kernel_magic = 0x4B524E4C;  // "KRNL"
-    uint32_t kernel_version = 1;
-    
-    std::cout << "Writing kernel manager header at position " << trace_file_.tellp() 
-              << " - Magic: 0x" << std::hex << kernel_magic 
-              << ", Version: " << std::dec << kernel_version << std::endl;
-              
-    trace_file_.write(reinterpret_cast<const char*>(&kernel_magic), sizeof(kernel_magic));
-    trace_file_.write(reinterpret_cast<const char*>(&kernel_version), sizeof(kernel_version));
-    
-    std::cout << "Position after kernel manager header: " << trace_file_.tellp() << std::endl;
-    
-    // Verify written data
-    trace_file_.flush();
-    
+    // Don't need to write tracer header here since this won't be the first thing in the file
+    // Kernel Manager will write its header at the beginning of the file
+    // This happens in finalizeTrace()
+        
     initialized_ = true;
 }
 
@@ -85,20 +58,7 @@ void Tracer::finalizeTrace() {
         return;
     }
     
-    // Write main header
-    struct {
-        uint32_t magic = TRACE_MAGIC;
-        uint32_t version = TRACE_VERSION;
-    } header;
-    
-    final_trace.write(reinterpret_cast<char*>(&header), sizeof(header));
-    
-    // Write kernel manager header and data
-    uint32_t kernel_magic = 0x4B524E4C;  // "KRNL"
-    uint32_t kernel_version = 1;
-    
-    final_trace.write(reinterpret_cast<const char*>(&kernel_magic), sizeof(kernel_magic));
-    final_trace.write(reinterpret_cast<const char*>(&kernel_version), sizeof(kernel_version));
+    kernel_manager_.writeKernelManagerHeader(final_trace);
     
     // Serialize kernel manager
     kernel_manager_.serialize(final_trace);
@@ -112,19 +72,9 @@ void Tracer::finalizeTrace() {
         return;
     }
     
-    // Skip headers in original trace
-    original_trace.seekg(sizeof(header) + sizeof(kernel_magic) + sizeof(kernel_version));
-    
-    // Skip kernel manager data in original trace
-    uint32_t kernel_count;
-    original_trace.read(reinterpret_cast<char*>(&kernel_count), sizeof(kernel_count));
-    original_trace.seekg(0, std::ios::end);
-    std::streampos end_pos = original_trace.tellg();
-    original_trace.seekg(sizeof(header) + sizeof(kernel_magic) + sizeof(kernel_version) + sizeof(kernel_count));
-    
     // Copy remaining data (events)
     std::vector<char> buffer(4096);  // Use a buffer for efficient copying
-    while (original_trace && original_trace.tellg() < end_pos) {
+    while (original_trace) {
         original_trace.read(buffer.data(), buffer.size());
         std::streamsize bytes_read = original_trace.gcount();
         if (bytes_read > 0) {
@@ -387,49 +337,17 @@ void Tracer::flush() {
     trace_file_.flush();
 }
 
-Tracer::Tracer(const std::string& path, bool skip_deserialization) {
+Tracer::Tracer(const std::string& path) {
     trace_path_ = path;
     std::cout << "Loading trace from: " << path << std::endl;
     
-    if (!skip_deserialization) {
         std::ifstream file(path, std::ios::binary);
         if (!file) {
             std::cerr << "Failed to open trace file: " << path << std::endl;
             throw std::runtime_error("Failed to open trace file: " + path);
         }
         
-        // Read and verify main header
-        struct {
-            uint32_t magic;
-            uint32_t version;
-        } header;
-        
-        file.read(reinterpret_cast<char*>(&header), sizeof(header));
-        
-        if (header.magic != TRACE_MAGIC) {
-            std::cerr << "Invalid trace file format: incorrect magic number (0x" 
-                      << std::hex << header.magic << ", expected: 0x" << TRACE_MAGIC << ")" << std::endl;
-            throw std::runtime_error("Invalid trace file format: incorrect magic number");
-        }
-        if (header.version != TRACE_VERSION) {
-            std::cerr << "Unsupported trace file version" << std::endl;
-            throw std::runtime_error("Unsupported trace file version");
-        }
-        
-        // Read and verify kernel manager header
-        uint32_t kernel_magic, kernel_version;
-        file.read(reinterpret_cast<char*>(&kernel_magic), sizeof(kernel_magic));
-        file.read(reinterpret_cast<char*>(&kernel_version), sizeof(kernel_version));
-        
-        if (kernel_magic != 0x4B524E4C) {
-            std::cerr << "Invalid kernel manager format in trace (magic: 0x" 
-                      << std::hex << kernel_magic << ", expected: 0x4B524E4C)" << std::endl;
-            throw std::runtime_error("Invalid kernel manager format in trace");
-        }
-        if (kernel_version != 1) {
-            std::cerr << "Unsupported kernel manager version in trace" << std::endl;
-            throw std::runtime_error("Unsupported kernel manager version in trace");
-        }
+        kernel_manager_.readKernelManagerHeader(file);
         
         // Deserialize kernel manager
         try {
@@ -470,15 +388,9 @@ Tracer::Tracer(const std::string& path, bool skip_deserialization) {
         std::cout << "Trace loaded successfully with " 
                   << trace_.kernel_executions.size() << " kernel executions and "
                   << trace_.memory_operations.size() << " memory operations" << std::endl;
-    } else {
-        // Open the file for writing when skipping deserialization
-        trace_file_.open(path, std::ios::binary | std::ios::in | std::ios::out);
-        if (!trace_file_) {
-            std::cerr << "Failed to open trace file for writing: " << path << std::endl;
-            throw std::runtime_error("Failed to open trace file for writing: " + path);
-        }
-        initialized_ = true;
-    }
+
+
+    std::cout << "Tracer initialized with kernels: " << kernel_manager_.getNumKernels() << std::endl;
 }
 
 KernelExecution Tracer::readKernelExecution(std::ifstream& file) {
