@@ -75,17 +75,31 @@ TEST(CodeGenTest, KernelWithScalarArguments) {
     exec.block_dim = dim3(128, 1, 1);
     exec.shared_mem = 0;
     
+    // Add memory states for all arguments
     size_t array_size = 128 * sizeof(float);
-    exec.pre_state.push_back(MemoryState(array_size));
+    exec.pre_state.push_back(MemoryState(array_size));  // out array
+    
+    // Add scalar argument values
+    int scalar1_value = 42;
+    float scalar2_value = 3.14f;
+    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(&scalar1_value), sizeof(int)));
+    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(&scalar2_value), sizeof(float)));
+    
+    // Add argument sizes
+    exec.arg_sizes.push_back(array_size);
+    exec.arg_sizes.push_back(sizeof(int));
+    exec.arg_sizes.push_back(sizeof(float));
     
     trace.kernel_executions.push_back(exec);
 
     CodeGen code_gen(trace, kernel_manager);
     std::string generated_code = code_gen.generateReproducer();
 
-    // Verify scalar parameter declarations
+    // Verify scalar parameter declarations and initialization
     EXPECT_TRUE(generated_code.find("int arg_1_scalarKernel;") != std::string::npos);
     EXPECT_TRUE(generated_code.find("float arg_2_scalarKernel;") != std::string::npos);
+    EXPECT_TRUE(generated_code.find("memcpy(&arg_1_scalarKernel, trace_data_1,") != std::string::npos);
+    EXPECT_TRUE(generated_code.find("memcpy(&arg_2_scalarKernel, trace_data_2,") != std::string::npos);
 }
 
 TEST(CodeGenTest, MultipleKernelLaunches) {
