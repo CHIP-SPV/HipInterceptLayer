@@ -825,9 +825,50 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
     return result;
 }
 
+
+static bool g_should_intercept = false;
 void __attribute__((destructor)) hip_intercept_cleanup() {
-    std::cout << "Interceptor exiting: Finalizing trace with " << kernel_manager.getNumKernels() << " kernels" << std::endl;
+    if (!g_should_intercept) return;
+    
+    std::cout << "Interceptor exiting: Finalizing trace with " 
+              << kernel_manager.getNumKernels() << " kernels" << std::endl;
     Tracer::instance().finalizeTrace(kernel_manager);
+}
+
+// Called when the library is loaded
+__attribute__((constructor))
+void hip_intercept_init() {
+    // Get the executable name
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
+    if (len != -1) {
+        exe_path[len] = '\0';
+        std::string exe_name = std::filesystem::path(exe_path).filename();
+        std::cout << "hip_intercept_init() called for process: " << exe_name << std::endl;
+
+        
+        // Skip interception for known compiler/toolchain executables
+        const std::vector<std::string> skip_list = {
+            "cc1plus",
+            "g++",
+            "gcc",
+            "ld",
+            "as",
+            "collect2",
+            "x86_64-linux-gnu-g++",
+            "x86_64-linux-gnu-gcc",
+            "gdb"
+            };
+            
+        g_should_intercept = std::none_of(skip_list.begin(), skip_list.end(),
+            [&exe_name](const std::string& skip) {
+                return exe_name.find(skip) != std::string::npos;
+            });
+            
+        std::cout << "HIP Intercept Layer: " 
+                  << (g_should_intercept ? "Intercepting" : "Skipping") 
+                  << " process: " << exe_name << std::endl;
+    }
 }
 
 } // extern "C"
