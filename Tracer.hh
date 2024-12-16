@@ -117,8 +117,10 @@ struct Trace {
 };
 
 class Tracer {
-    KernelManager kernel_manager_;
 public:
+    KernelManager& getKernelManager() { return kernel_manager_; }
+    const KernelManager& getKernelManager() const { return kernel_manager_; }
+
     Trace trace_;
 
     static Tracer& instance();
@@ -134,9 +136,9 @@ public:
     Tracer& operator=(Tracer&&) = delete;
 
     Tracer(const std::string& path, bool skip_deserialization = false); // Used for loading the trace from file
-    ~Tracer();
+    ~Tracer() { std::cout << "Tracer destructor called" << std::endl; finalizeTrace(); }
     
-    void finalizeTrace(KernelManager& kernel_manager);
+    void finalizeTrace();
 private:
     Tracer(); // Used for recording the trace
 
@@ -159,6 +161,7 @@ private:
     static MemoryOperation readMemoryOperation(std::ifstream& file);
     
     uint64_t current_execution_order_;
+    KernelManager kernel_manager_;
 };
 
 } // namespace hip_intercept

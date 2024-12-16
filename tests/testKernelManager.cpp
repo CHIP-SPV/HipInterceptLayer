@@ -341,7 +341,7 @@ TEST_F(KernelManagerTest, FinalizeTraceTest) {
     // Create a tracer and finalize the trace (skip initial deserialization)
     {
         Tracer tracer(trace_file, true);  // Pass true to skip deserialization
-        EXPECT_NO_THROW(tracer.finalizeTrace(manager));
+        EXPECT_NO_THROW(tracer.finalizeTrace());
     }
 
     // Verify the finalized trace

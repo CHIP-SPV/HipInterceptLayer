@@ -20,9 +20,6 @@ static std::unordered_map<hipFunction_t, std::string> rtc_kernel_names;
 // Map to store RTC program sources
 std::unordered_map<hiprtcProgram, std::string> rtc_program_sources;
 
-// Create a KernelManager instance
-static KernelManager kernel_manager;
-
 std::pair<void*, AllocationInfo*> findContainingAllocation(void* ptr) {
     for (auto& [base_ptr, info] : gpu_allocations) {
         char* start = static_cast<char*>(base_ptr);
@@ -305,7 +302,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
 
-    auto kernel = kernel_manager.getKernelByName(kernelName);
+    auto kernel = Tracer::instance().getKernelManager().getKernelByName(kernelName);
     assert(countKernelArgs(args) == kernel.getArguments().size());
 
     std::cout << "\nDEBUG: Processing kernel arguments:"
@@ -436,7 +433,7 @@ std::string getFunctionSignatureFromSource(const std::string& source, const std:
         
         try {
             // Add kernels from the source code
-            kernel_manager.addFromModuleSource(source);
+            Tracer::instance().getKernelManager().addFromModuleSource(source);
             
             // Log the parsing attempt
             std::cout << "Parsed kernels from source code" << std::endl;
@@ -654,7 +651,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     }
  
     std::cout << "Looking up kernel: '" << kernel_name << "'" << std::endl;
-    Kernel kernel = kernel_manager.getKernelByName(kernel_name);
+    Kernel kernel = Tracer::instance().getKernelManager().getKernelByName(kernel_name);
 
     // Create execution record
     hip_intercept::KernelExecution exec;
@@ -825,15 +822,7 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
     return result;
 }
 
-
 static bool g_should_intercept = false;
-void __attribute__((destructor)) hip_intercept_cleanup() {
-    if (!g_should_intercept) return;
-    
-    std::cout << "Interceptor exiting: Finalizing trace with " 
-              << kernel_manager.getNumKernels() << " kernels" << std::endl;
-    Tracer::instance().finalizeTrace(kernel_manager);
-}
 
 // Called when the library is loaded
 __attribute__((constructor))

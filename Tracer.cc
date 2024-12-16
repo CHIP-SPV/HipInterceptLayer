@@ -23,8 +23,6 @@ Tracer::Tracer() :
     initializeTraceFile();
 }
 
-Tracer::~Tracer() {}
-
 void Tracer::initializeTraceFile() {
     if (initialized_) return;
     
@@ -74,10 +72,10 @@ void Tracer::initializeTraceFile() {
     initialized_ = true;
 }
 
-void Tracer::finalizeTrace(KernelManager& kernel_manager) {
+void Tracer::finalizeTrace() {
     if (!initialized_) return;
     
-    std::cout << "Finalizing trace with " << kernel_manager.getNumKernels() << " kernels" << std::endl;
+    std::cout << "Finalizing trace with " << kernel_manager_.getNumKernels() << " kernels" << std::endl;
     
     // Create a new file for the final trace
     std::string final_trace_path = trace_path_ + ".final";
@@ -103,7 +101,7 @@ void Tracer::finalizeTrace(KernelManager& kernel_manager) {
     final_trace.write(reinterpret_cast<const char*>(&kernel_version), sizeof(kernel_version));
     
     // Serialize kernel manager
-    kernel_manager.serialize(final_trace);
+    kernel_manager_.serialize(final_trace);
     
     // Copy all events from original trace
     std::ifstream original_trace(trace_path_, std::ios::binary);
@@ -143,6 +141,7 @@ void Tracer::finalizeTrace(KernelManager& kernel_manager) {
     std::filesystem::rename(final_trace_path, trace_path_);
     
     std::cout << "Trace finalized successfully" << std::endl;
+    initialized_ = false;
 }
 
 void Tracer::recordKernelLaunch(const KernelExecution& exec) {
