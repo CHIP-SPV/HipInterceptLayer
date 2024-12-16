@@ -22,7 +22,7 @@ add_executable(HipInterceptCompare Comparator.cc Tracer.cc)
 
 # Add test executable
 add_executable(unit_tests
-  tests/testKernelManager.cpp
+  tests/testKernelManager.cpp Tracer.cc
 )
 
 target_link_libraries(unit_tests

@@ -826,7 +826,7 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
 }
 
 void __attribute__((destructor)) hip_intercept_cleanup() {
-    std::cout << "Finalizing trace" << std::endl;
+    std::cout << "Interceptor exiting: Finalizing trace with " << kernel_manager.getNumKernels() << " kernels" << std::endl;
     Tracer::instance().finalizeTrace(kernel_manager);
 }
 

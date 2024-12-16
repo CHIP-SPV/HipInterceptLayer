@@ -133,7 +133,7 @@ public:
     Tracer(Tracer&&) = delete;
     Tracer& operator=(Tracer&&) = delete;
 
-    Tracer(const std::string& path); // Used for loading the trace from file
+    Tracer(const std::string& path, bool skip_deserialization = false); // Used for loading the trace from file
     ~Tracer();
     
     void finalizeTrace(KernelManager& kernel_manager);

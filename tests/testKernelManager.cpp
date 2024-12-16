@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 #include "../KernelManager.hh"
+#include "../Tracer.hh"
 #include <fstream>
 #include <sstream>
+
+using namespace hip_intercept;
 
 class KernelManagerTest : public ::testing::Test {
 protected:
@@ -294,4 +297,97 @@ TEST_F(KernelManagerTest, SerializationConsistency) {
     // Clean up
     std::remove(temp_file1.c_str());
     std::remove(temp_file2.c_str());
+}
+
+TEST_F(KernelManagerTest, FinalizeTraceTest) {
+    // Add kernels to manager
+    manager.addFromModuleSource(test_source);
+    ASSERT_EQ(manager.getNumKernels(), 4);
+    
+    // Create a mock trace
+    std::string trace_file = "test_trace.bin";
+    {
+        std::ofstream trace(trace_file, std::ios::binary);
+        ASSERT_TRUE(trace.is_open());
+        
+        // Write trace header
+        uint32_t trace_magic = 0x48495054;  // HIPT
+        uint32_t trace_version = 1;
+        trace.write(reinterpret_cast<const char*>(&trace_magic), sizeof(trace_magic));
+        trace.write(reinterpret_cast<const char*>(&trace_version), sizeof(trace_version));
+        
+        // Write kernel manager header
+        uint32_t kernel_magic = 0x4B524E4C;  // KRNL
+        uint32_t kernel_version = 1;
+        trace.write(reinterpret_cast<const char*>(&kernel_magic), sizeof(kernel_magic));
+        trace.write(reinterpret_cast<const char*>(&kernel_version), sizeof(kernel_version));
+        
+        // Write empty kernel count (will be replaced by finalizeTrace)
+        uint32_t empty_count = 0;
+        trace.write(reinterpret_cast<const char*>(&empty_count), sizeof(empty_count));
+        
+        // Write a dummy event to test event copying
+        struct {
+            uint32_t type = 1;  // Kernel execution
+            uint64_t timestamp = 123456;
+            uint32_t size = sizeof(uint32_t);
+        } event_header;
+        
+        trace.write(reinterpret_cast<const char*>(&event_header), sizeof(event_header));
+        uint32_t dummy_data = 0xDEADBEEF;
+        trace.write(reinterpret_cast<const char*>(&dummy_data), sizeof(dummy_data));
+    }
+
+    // Create a tracer and finalize the trace (skip initial deserialization)
+    {
+        Tracer tracer(trace_file, true);  // Pass true to skip deserialization
+        EXPECT_NO_THROW(tracer.finalizeTrace(manager));
+    }
+
+    // Verify the finalized trace
+    {
+        std::ifstream verify_trace(trace_file, std::ios::binary);
+        ASSERT_TRUE(verify_trace.is_open());
+        
+        // Verify trace header
+        uint32_t magic, version;
+        verify_trace.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        verify_trace.read(reinterpret_cast<char*>(&version), sizeof(version));
+        EXPECT_EQ(magic, 0x48495054);
+        EXPECT_EQ(version, 1);
+        
+        // Verify kernel manager header
+        uint32_t kernel_magic, kernel_version;
+        verify_trace.read(reinterpret_cast<char*>(&kernel_magic), sizeof(kernel_magic));
+        verify_trace.read(reinterpret_cast<char*>(&kernel_version), sizeof(kernel_version));
+        EXPECT_EQ(kernel_magic, 0x4B524E4C);
+        EXPECT_EQ(kernel_version, 1);
+        
+        // Create a new manager and deserialize
+        KernelManager restored_manager;
+        EXPECT_NO_THROW(restored_manager.deserialize(verify_trace));
+        EXPECT_EQ(restored_manager.getNumKernels(), 4);
+        
+        // Verify the kernels match
+        verifyKernelManagerState(manager, restored_manager);
+        
+        // Verify the event was copied
+        struct {
+            uint32_t type;
+            uint64_t timestamp;
+            uint32_t size;
+        } event_header;
+        
+        verify_trace.read(reinterpret_cast<char*>(&event_header), sizeof(event_header));
+        EXPECT_EQ(event_header.type, 1);
+        EXPECT_EQ(event_header.timestamp, 123456);
+        EXPECT_EQ(event_header.size, sizeof(uint32_t));
+        
+        uint32_t dummy_data;
+        verify_trace.read(reinterpret_cast<char*>(&dummy_data), sizeof(dummy_data));
+        EXPECT_EQ(dummy_data, 0xDEADBEEF);
+    }
+
+    // Clean up
+    std::remove(trace_file.c_str());
 }
