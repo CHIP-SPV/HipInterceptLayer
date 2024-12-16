@@ -165,7 +165,7 @@ TEST(CodeGenTest, GenerateAndCompile) {
     size_t array_size = 64 * sizeof(float);
     std::vector<float> sample_data(64, 1.0f);
     for (size_t i = 0; i < sample_data.size(); i++) {
-        sample_data[i] = static_cast<float>(i);  // More varied test data
+        sample_data[i] = static_cast<float>(i);
     }
     exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(sample_data.data()), array_size));
     
@@ -184,21 +184,35 @@ TEST(CodeGenTest, GenerateAndCompile) {
 
     CodeGen code_gen(trace, kernel_manager);
     
-    // Test file generation
+    // Generate and compile the code
     std::string generated_file = code_gen.generateFile(test_dir);
     EXPECT_TRUE(std::filesystem::exists(generated_file));
-    
-    // Print generated code for debugging
+
     std::cout << "\nGenerated code:\n" << std::ifstream(generated_file).rdbuf() << std::endl;
-    
-    // Test compilation
+
     EXPECT_TRUE(code_gen.compileFile(generated_file, test_dir));
     
-    // Verify the executable was created
-    std::string expected_executable = 
+    // Get path to the compiled binary
+    std::string executable = 
         (std::filesystem::path(test_dir) / 
          std::filesystem::path(generated_file).stem()).string();
-    EXPECT_TRUE(std::filesystem::exists(expected_executable));
+    EXPECT_TRUE(std::filesystem::exists(executable));
+    
+    // Run the compiled binary
+    std::string cmd = executable + " 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    ASSERT_TRUE(pipe != nullptr);
+    
+    // Read the output
+    char buffer[128];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    
+    // Check the return code
+    int status = pclose(pipe);
+    EXPECT_EQ(WEXITSTATUS(status), 0) << "Program failed with output:\n" << output;
     
     // Cleanup
     std::filesystem::remove_all(test_dir);
