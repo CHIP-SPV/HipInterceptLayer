@@ -6,6 +6,10 @@
 #include <sstream>
 #include <string>
 #include <unordered_set>
+#include <filesystem>
+#include <cstdlib>
+#include <chrono>
+#include <fstream>
 
 namespace hip_intercept {
 
@@ -36,6 +40,63 @@ public:
         return ss.str();
     }
 
+    // Generate and write the code to a file
+    std::string generateFile(const std::string& output_dir = "/tmp") {
+        std::filesystem::path dir_path(output_dir);
+        std::filesystem::create_directories(dir_path);
+        
+        // Generate a unique filename using timestamp
+        auto now = std::chrono::system_clock::now();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        
+        std::string filename = dir_path / ("kernel_replay_" + std::to_string(timestamp) + ".hip");
+        
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            throw std::runtime_error("Failed to create output file: " + filename);
+        }
+        
+        file << generateReproducer();
+        file.close();
+        
+        return filename;
+    }
+
+    // Compile the generated file using hipcc
+    bool compileFile(const std::string& filename, const std::string& output_dir = "/tmp") {
+        std::filesystem::path output_path(output_dir);
+        std::filesystem::path input_path(filename);
+        std::string output_file = (output_path / input_path.stem()).string();
+
+        // Construct the hipcc command
+        std::stringstream cmd;
+        cmd << "hipcc -w -o " << output_file << " " << filename;
+        
+        std::cout << "Executing: " << cmd.str() << std::endl;
+        
+        // Execute the command
+        int result = std::system(cmd.str().c_str());
+        
+        if (result != 0) {
+            std::cerr << "Compilation failed with error code: " << result << std::endl;
+            return false;
+        }
+        
+        return true;
+    }
+
+    // Convenience method to generate and compile in one step
+    bool generateAndCompile(const std::string& output_dir = "/tmp") {
+        try {
+            std::string filename = generateFile(output_dir);
+            return compileFile(filename, output_dir);
+        } catch (const std::exception& e) {
+            std::cerr << "Error during generate and compile: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
 private:
     const Trace& trace_;
     const KernelManager& kernel_manager_;
@@ -44,8 +105,29 @@ private:
     void generateHeader(std::stringstream& ss) {
         ss << "#include <hip/hip_runtime.h>\n"
            << "#include <iostream>\n"
-           << "#include <cstring>\n\n"
-           << "int main() {\n"
+           << "#include <cstring>\n\n";
+        
+        // Add kernel declarations from KernelManager
+        for (const auto& exec : trace_.kernel_executions) {
+            const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
+            ss << kernel.getSource() << "\n\n";
+        }
+        
+        // Add trace data declarations
+        for (const auto& exec : trace_.kernel_executions) {
+            for (size_t i = 0; i < exec.pre_state.size(); i++) {
+                ss << "const unsigned char trace_data_" << i << "[] = {";
+                const unsigned char* data = reinterpret_cast<const unsigned char*>(exec.pre_state[i].data.get());
+                for (size_t j = 0; j < exec.pre_state[i].size; j++) {
+                    if (j % 12 == 0) ss << "\n    ";
+                    ss << static_cast<unsigned int>(data[j]);
+                    if (j < exec.pre_state[i].size - 1) ss << ", ";
+                }
+                ss << "\n};\n\n";
+            }
+        }
+        
+        ss << "int main() {\n"
            << "    hipError_t err;\n\n";
     }
 
@@ -93,10 +175,15 @@ private:
                     ss << "    " << var_name << "_h = (" << arg.getType() << ")malloc(" << size << ");\n";
                     ss << "    err = hipMalloc(&" << var_name << "_d, " << size << ");\n";
                     ss << "    if (err != hipSuccess) { std::cerr << \"Failed to allocate memory\\n\"; return 1; }\n";
-                    ss << "    memcpy(" << var_name << "_h, trace_data_" << i << ", " << size << ");\n";
-                    ss << "    err = hipMemcpy(" << var_name << "_d, " << var_name << "_h, " << size 
-                       << ", hipMemcpyHostToDevice);\n";
+                    ss << "    memcpy(" << var_name << "_h, trace_data_" << i 
+                       << ", " << size << ");\n";
+                    ss << "    err = hipMemcpy(" << var_name << "_d, " << var_name 
+                       << "_h, " << size << ", hipMemcpyHostToDevice);\n";
                     ss << "    if (err != hipSuccess) { std::cerr << \"Failed to copy memory\\n\"; return 1; }\n\n";
+                } else if (!arg.isPointer() && i < exec.arg_sizes.size()) {
+                    // Handle scalar arguments
+                    ss << "    memcpy(&" << var_name << ", trace_data_" << i 
+                       << ", sizeof(" << arg.getType() << "));\n";
                 }
             }
         }

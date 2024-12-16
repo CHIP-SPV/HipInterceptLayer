@@ -126,3 +126,90 @@ TEST(CodeGenTest, MultipleKernelLaunches) {
     EXPECT_NE(second_launch, std::string::npos);
     EXPECT_NE(first_launch, second_launch);
 }
+
+TEST(CodeGenTest, GenerateAndCompile) {
+    std::string kernel_source = R"(
+        __global__ void simpleKernel(float* data, int n) {
+            int i = blockDim.x * blockIdx.x + threadIdx.x;
+            if (i < n) {
+                data[i] *= 2.0f;
+            }
+        }
+    )";
+
+    KernelManager kernel_manager;
+    kernel_manager.addFromModuleSource(kernel_source);
+
+    Trace trace;
+    KernelExecution exec;
+    exec.kernel_name = "simpleKernel";
+    exec.grid_dim = dim3(1, 1, 1);
+    exec.block_dim = dim3(64, 1, 1);
+    exec.shared_mem = 0;
+    
+    // Create sample data for the float array
+    size_t array_size = 64 * sizeof(float);
+    std::vector<float> sample_data(64, 1.0f);
+    for (size_t i = 0; i < sample_data.size(); i++) {
+        sample_data[i] = static_cast<float>(i);  // More varied test data
+    }
+    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(sample_data.data()), array_size));
+    
+    // Add scalar argument
+    int n_value = 64;
+    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(&n_value), sizeof(int)));
+    exec.arg_sizes.push_back(array_size);
+    exec.arg_sizes.push_back(sizeof(int));
+    
+    trace.kernel_executions.push_back(exec);
+
+    // Create a temporary directory for test outputs
+    std::string test_dir = "/tmp/hip_test_" + std::to_string(
+        std::chrono::system_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(test_dir);
+
+    CodeGen code_gen(trace, kernel_manager);
+    
+    // Test file generation
+    std::string generated_file = code_gen.generateFile(test_dir);
+    EXPECT_TRUE(std::filesystem::exists(generated_file));
+    
+    // Print generated code for debugging
+    std::cout << "\nGenerated code:\n" << std::ifstream(generated_file).rdbuf() << std::endl;
+    
+    // Test compilation
+    EXPECT_TRUE(code_gen.compileFile(generated_file, test_dir));
+    
+    // Verify the executable was created
+    std::string expected_executable = 
+        (std::filesystem::path(test_dir) / 
+         std::filesystem::path(generated_file).stem()).string();
+    EXPECT_TRUE(std::filesystem::exists(expected_executable));
+    
+    // Cleanup
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST(CodeGenTest, GenerateAndCompileInvalidKernel) {
+    std::string kernel_source = R"(
+        __global__ void invalidKernel(float* data) {
+            int i = blockDim.x * blockIdx.x + threadIdx.x;
+            undefined_function();  // This should cause a compilation error
+        }
+    )";
+
+    KernelManager kernel_manager;
+    kernel_manager.addFromModuleSource(kernel_source);
+
+    Trace trace;
+    KernelExecution exec;
+    exec.kernel_name = "invalidKernel";
+    exec.grid_dim = dim3(1, 1, 1);
+    exec.block_dim = dim3(64, 1, 1);
+    exec.pre_state.push_back(MemoryState(64 * sizeof(float)));
+    
+    trace.kernel_executions.push_back(exec);
+
+    CodeGen code_gen(trace, kernel_manager);
+    EXPECT_FALSE(code_gen.generateAndCompile("/tmp"));
+}
