@@ -2,19 +2,25 @@
 #include "CodeGen.hh"
 #include "KernelManager.hh"
 #include "Tracer.hh"
+#include "data/Kernels.hh"
+#include <fstream>
 
 using namespace hip_intercept;
 
+// Helper function to save and print generated code
+void saveAndPrintCode(const std::string& test_name, const std::string& generated_code) {
+    std::string test_output = "/tmp/test_" + test_name + ".cpp";
+    std::ofstream out(test_output);
+    out << generated_code;
+    out.close();
+    
+    std::cout << "\nGenerated code for " << test_name << " saved to: " << test_output << "\n";
+    std::cout << "Generated code:\n" << generated_code << std::endl;
+}
+
 TEST(CodeGenTest, BasicCodeGeneration) {
     // Create a simple kernel
-    std::string kernel_source = R"(
-        __global__ void vectorAdd(float* a, float* b, float* c, int n) {
-            int i = blockDim.x * blockIdx.x + threadIdx.x;
-            if (i < n) {
-                c[i] = a[i] + b[i];
-            }
-        }
-    )";
+    std::string kernel_source = test_kernels::kernel_strings::vector_add;
 
     // Setup KernelManager
     KernelManager kernel_manager;
@@ -38,8 +44,11 @@ TEST(CodeGenTest, BasicCodeGeneration) {
 
     // Generate code
     CodeGen code_gen(trace, kernel_manager);
+    
+    // Save to file and print for debugging
     std::string generated_code = code_gen.generateReproducer();
-
+    saveAndPrintCode("basic_codegen", generated_code);
+    
     // Basic verification
     EXPECT_TRUE(generated_code.find("hipMalloc") != std::string::npos);
     EXPECT_TRUE(generated_code.find("vectorAdd<<<") != std::string::npos);
@@ -58,12 +67,7 @@ TEST(CodeGenTest, BasicCodeGeneration) {
 }
 
 TEST(CodeGenTest, KernelWithScalarArguments) {
-    std::string kernel_source = R"(
-        __global__ void scalarKernel(float* out, int scalar1, float scalar2) {
-            int i = blockDim.x * blockIdx.x + threadIdx.x;
-            out[i] = scalar1 * scalar2;
-        }
-    )";
+    std::string kernel_source = test_kernels::kernel_strings::scalar_kernel;
 
     KernelManager kernel_manager;
     kernel_manager.addFromModuleSource(kernel_source);
@@ -94,6 +98,7 @@ TEST(CodeGenTest, KernelWithScalarArguments) {
 
     CodeGen code_gen(trace, kernel_manager);
     std::string generated_code = code_gen.generateReproducer();
+    saveAndPrintCode("scalar_arguments", generated_code);
 
     // Verify scalar parameter declarations and initialization
     EXPECT_TRUE(generated_code.find("int arg_1_scalarKernel;") != std::string::npos);
@@ -103,12 +108,7 @@ TEST(CodeGenTest, KernelWithScalarArguments) {
 }
 
 TEST(CodeGenTest, MultipleKernelLaunches) {
-    std::string kernel_source = R"(
-        __global__ void simpleKernel(float* data) {
-            int i = blockDim.x * blockIdx.x + threadIdx.x;
-            data[i] *= 2.0f;
-        }
-    )";
+    std::string kernel_source = test_kernels::kernel_strings::simple_kernel;
 
     KernelManager kernel_manager;
     kernel_manager.addFromModuleSource(kernel_source);
@@ -132,6 +132,7 @@ TEST(CodeGenTest, MultipleKernelLaunches) {
 
     CodeGen code_gen(trace, kernel_manager);
     std::string generated_code = code_gen.generateReproducer();
+    saveAndPrintCode("multiple_launches", generated_code);
 
     // Verify multiple kernel launches
     size_t first_launch = generated_code.find("simpleKernel<<<");
@@ -142,14 +143,7 @@ TEST(CodeGenTest, MultipleKernelLaunches) {
 }
 
 TEST(CodeGenTest, GenerateAndCompile) {
-    std::string kernel_source = R"(
-        __global__ void simpleKernel(float* data, int n) {
-            int i = blockDim.x * blockIdx.x + threadIdx.x;
-            if (i < n) {
-                data[i] *= 2.0f;
-            }
-        }
-    )";
+    std::string kernel_source = test_kernels::kernel_strings::simple_kernel_with_n;
 
     KernelManager kernel_manager;
     kernel_manager.addFromModuleSource(kernel_source);
@@ -216,15 +210,13 @@ TEST(CodeGenTest, GenerateAndCompile) {
     
     // Cleanup
     std::filesystem::remove_all(test_dir);
+
+    std::string generated_code = code_gen.generateReproducer();
+    saveAndPrintCode("generate_and_compile", generated_code);
 }
 
 TEST(CodeGenTest, GenerateAndCompileInvalidKernel) {
-    std::string kernel_source = R"(
-        __global__ void invalidKernel(float* data) {
-            int i = blockDim.x * blockIdx.x + threadIdx.x;
-            undefined_function();  // This should cause a compilation error
-        }
-    )";
+    std::string kernel_source = test_kernels::kernel_strings::invalid_kernel;
 
     KernelManager kernel_manager;
     kernel_manager.addFromModuleSource(kernel_source);
@@ -239,5 +231,8 @@ TEST(CodeGenTest, GenerateAndCompileInvalidKernel) {
     trace.kernel_executions.push_back(exec);
 
     CodeGen code_gen(trace, kernel_manager);
+    std::string generated_code = code_gen.generateReproducer();
+    saveAndPrintCode("invalid_kernel", generated_code);
+
     EXPECT_FALSE(code_gen.generateAndCompile("/tmp"));
 }

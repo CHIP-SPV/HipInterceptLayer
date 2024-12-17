@@ -89,6 +89,21 @@ public:
         return type;
     }
 
+    std::string getBaseType() const {
+        // Remove __restrict__ and similar qualifiers
+        std::string base_type = type;
+        std::regex qualifiers(R"(\s*(?:__restrict__|__restrict|__global__|__device__|__host__|__constant__|__shared__|__managed__|__pinned__|__constant__|__shared__|__managed__|__pinned__))");
+        base_type = std::regex_replace(base_type, qualifiers, "");
+        // Remove any trailing spaces
+        base_type = std::regex_replace(base_type, std::regex("\\s+$"), "");
+        // Remove any leading spaces
+        base_type = std::regex_replace(base_type, std::regex("^\\s+"), "");
+
+        // Also strip *
+        base_type = std::regex_replace(base_type, std::regex("\\*"), "");
+        return base_type;
+    }
+
     void serialize(std::ofstream& file) const {
         uint32_t name_len = name.length();
         uint32_t type_len = type.length();

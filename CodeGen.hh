@@ -138,22 +138,20 @@ private:
             
             for (size_t i = 0; i < args.size(); i++) {
                 const auto& arg = args[i];
-                std::string base_name = "arg_" + std::to_string(i) + "_" + exec.kernel_name;
+                std::string var_name = "arg_" + std::to_string(i) + "_" + exec.kernel_name;
                 
-                if (declared_vars_.find(base_name) != declared_vars_.end()) {
+                if (declared_vars_.find(var_name) != declared_vars_.end()) {
                     continue;
                 }
                 
                 if (arg.isPointer()) {
-                    std::string host_var = base_name + "_h";
-                    std::string dev_var = base_name + "_d";
-                    ss << "    " << arg.getType() << " " << host_var << " = nullptr;\n";
-                    ss << "    " << arg.getType() << " " << dev_var << " = nullptr;\n";
-                    declared_vars_.insert(host_var);
-                    declared_vars_.insert(dev_var);
+                    ss << "    " << arg.getBaseType() << "* " << var_name << "_h = nullptr;\n";
+                    ss << "    " << arg.getBaseType() << "* " << var_name << "_d = nullptr;\n";
+                    declared_vars_.insert(var_name + "_h");
+                    declared_vars_.insert(var_name + "_d");
                 } else {
-                    ss << "    " << arg.getType() << " " << base_name << ";\n";
-                    declared_vars_.insert(base_name);
+                    ss << "    " << arg.getBaseType() << " " << var_name << ";\n";
+                    declared_vars_.insert(var_name);
                 }
             }
             ss << "\n";
@@ -172,8 +170,8 @@ private:
                 if (arg.isPointer() && i < exec.pre_state.size()) {
                     size_t size = exec.pre_state[i].size;
                     ss << "    // Allocate and initialize " << var_name << "\n";
-                    ss << "    " << var_name << "_h = (" << arg.getType() << ")malloc(" << size << ");\n";
-                    ss << "    err = hipMalloc(&" << var_name << "_d, " << size << ");\n";
+                    ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc(" << size << ");\n";
+                    ss << "    err = hipMalloc((void**)&" << var_name << "_d, " << size << ");\n";
                     ss << "    if (err != hipSuccess) { std::cerr << \"Failed to allocate memory\\n\"; return 1; }\n";
                     ss << "    memcpy(" << var_name << "_h, trace_data_" << i 
                        << ", " << size << ");\n";
@@ -183,7 +181,7 @@ private:
                 } else if (!arg.isPointer() && i < exec.arg_sizes.size()) {
                     // Handle scalar arguments
                     ss << "    memcpy(&" << var_name << ", trace_data_" << i 
-                       << ", sizeof(" << arg.getType() << "));\n";
+                       << ", sizeof(" << arg.getBaseType() << "));\n";
                 }
             }
         }
