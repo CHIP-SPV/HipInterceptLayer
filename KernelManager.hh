@@ -295,7 +295,19 @@ public:
     std::pair<std::string, std::vector<Argument>> getKernelInfo(std::string signature) const {
         std::vector<Argument> args;
         std::string kernel_name;
+        // Extract kernel name from device stub
+        size_t stub_pos = signature.find("__device_stub__");
+        if (stub_pos != std::string::npos) {
+            // Remove __device_stub__ prefix to get actual kernel name
+            signature = signature.substr(stub_pos + 15); // 15 is length of "__device_stub__"
+        }
 
+        // Extract kernel name from source signature
+        size_t void_pos = signature.find("void");
+        if (void_pos != std::string::npos) {
+            signature = signature.substr(void_pos + 4 + 1); // void +1 for space
+        }
+        
         // Extract kernel name (everything up to the opening parenthesis)
         size_t name_end = signature.find('(');
         if (name_end != std::string::npos) {
@@ -693,45 +705,15 @@ public:
             std::cerr << "Failed to run nm command: " << strerror(errno) << std::endl;
             return;
         }
-        
+
+        // call Kernel constructor for each line in nm output
         char buffer[1024];
-        std::vector<std::string> stub_signatures;
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
             std::string line(buffer);
-            // Parse the nm output to extract function signature
-            std::regex signature_regex(R"(.*__device_stub__([^(]+)\((.*?)\))");
-            std::smatch matches;
-            if (std::regex_search(line, matches, signature_regex)) {
-                // matches[1] contains the kernel name (including namespace)
-                // matches[2] contains the argument list
-                auto signature = matches[1].str() + "(" + matches[2].str() + ")";
-                stub_signatures.push_back(signature);
-            }
+            Kernel kernel(line);
+            kernels.push_back(kernel);
         }
-        
-        int status = pclose(pipe);
-        if (status == -1) {
-            std::cerr << "Failed to close pipe: " << strerror(errno) << std::endl;
-        }
-
-        // Create kernel objects for each signature found
-        for (const auto& signature : stub_signatures) {
-            // Check if kernel already exists
-            auto existing = std::find_if(kernels.begin(), kernels.end(),
-                [&](const Kernel& k) { return k.getSignature() == signature; });
-                
-            if (existing == kernels.end()) {
-                std::cout << "Creating kernel from signature: " << signature << std::endl;
-                Kernel kernel(signature);
-                const_cast<KernelManager*>(this)->kernels.push_back(kernel);
-            }
-        }
-
-        if (stub_signatures.empty()) {
-            std::cerr << "No kernel signatures found in binary " << object_file << std::endl;
-        } else {
-            std::cout << "Added " << stub_signatures.size() << " kernels from " << object_file << std::endl;
-        }
+        pclose(pipe);
     }
 
     Kernel getKernelByPointer(const void* function_address) {
