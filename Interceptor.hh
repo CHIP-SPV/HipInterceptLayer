@@ -25,6 +25,7 @@ public:
 
 class Interceptor {
     std::unordered_map<void*, AllocationInfo> gpu_allocations;
+    std::string exe_path;
 
 public:
     static Interceptor& instance() {
@@ -34,6 +35,14 @@ public:
 
     ~Interceptor() {
         gpu_allocations.clear();
+    }
+
+    const std::string& getExePath() const {
+        return exe_path;
+    }
+
+    void setExePath(const std::string& path) {
+        exe_path = path;
     }
 
     AllocationInfo& addAllocation(void* ptr, size_t size) {

@@ -267,14 +267,13 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     std::cout << "\nDEBUG: hipLaunchKernel_impl for function " << function_address << std::endl;
               
     // Get kernel name and print args using Tracer
-    std::string kernelName = getKernelName(function_address);
-    std::cout << "Kernel name: " << kernelName << std::endl;
-    printKernelArgs(args, kernelName, function_address);
+    auto kernel = Tracer::instance().getKernelManager().getKernelByPointer(function_address);
+    std::cout << "Kernel name: " << kernel.getName() << std::endl;
     
     // Create execution record
     hip_intercept::KernelExecution exec;
     exec.function_address = (void*)function_address;
-    exec.kernel_name = kernelName;
+    exec.kernel_name = kernel.getName();
     exec.grid_dim = numBlocks;
     exec.block_dim = dimBlocks;
     exec.shared_mem = sharedMemBytes;
@@ -282,7 +281,6 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
 
-    auto kernel = Tracer::instance().getKernelManager().getKernelByName(kernelName);
     assert(countKernelArgs(args) == kernel.getArguments().size());
 
     std::cout << "\nDEBUG: Processing kernel arguments:"
@@ -808,7 +806,8 @@ void hip_intercept_init() {
     if (len != -1) {
         exe_path[len] = '\0';
         std::string exe_name = std::filesystem::path(exe_path).filename();
-        std::cout << "hip_intercept_init() called for process: " << exe_name << std::endl;
+        auto abs_path = std::filesystem::absolute(exe_path);
+        //std::cout << "hip_intercept_init() called for process: " << abs_path << std::endl;
 
         
         // Skip interception for known compiler/toolchain executables
@@ -821,13 +820,22 @@ void hip_intercept_init() {
             "collect2",
             "x86_64-linux-gnu-g++",
             "x86_64-linux-gnu-gcc",
-            "gdb"
+            "gdb",
+            "grep",
+            "nm",
+            "objdump",
+            "readelf",
+            "strip"
             };
             
         g_should_intercept = std::none_of(skip_list.begin(), skip_list.end(),
             [&exe_name](const std::string& skip) {
                 return exe_name.find(skip) != std::string::npos;
             });
+        
+        if (g_should_intercept) {
+            Interceptor::instance().setExePath(abs_path);
+        }
             
         std::cout << "HIP Intercept Layer: " 
                   << (g_should_intercept ? "Intercepting" : "Skipping") 

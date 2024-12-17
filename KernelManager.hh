@@ -8,6 +8,9 @@
 #include <stack>
 #include <fstream>
 #include <unordered_map>
+#include <queue>
+#include <link.h>
+#include <elf.h>
 #define __HIP_PLATFORM_SPIRV__
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
@@ -161,9 +164,7 @@ class Kernel {
     std::string name;
     std::string signature;
     std::vector<Argument> arguments;
-
-
-
+    void* function_address;
 
     void parseKernelSource() {
         if (moduleSource.empty() || name.empty()) {
@@ -246,6 +247,9 @@ class Kernel {
         //std::cout << "Kernel source:\n" << kernelSource << std::endl;
     }
 public:
+    void* getFunctionAddress() const {
+        return function_address;
+    }
 
     std::vector<Argument>getArguments() const {
         return arguments;
@@ -411,6 +415,142 @@ class KernelManager {
     std::vector<Kernel> kernels;
     std::unordered_map<hipFunction_t, std::string> rtc_kernel_names;
     std::unordered_map<hiprtcProgram, std::string> rtc_program_sources;
+    std::vector<std::string> object_files;
+
+    // Get kernel object file
+ std::string getKernelObjectFile(const void* function_address) const {
+    //std::cout << "\nSearching for kernel object file containing address " 
+    //          << function_address << std::endl;
+              
+    std::queue<std::string> files_to_check;
+    std::set<std::string> checked_files;
+    
+    // Start with /proc/self/exe
+    files_to_check.push("/proc/self/exe");
+    //std::cout << "Starting search with /proc/self/exe" << std::endl;
+    
+    // Helper function to get dependencies using ldd
+    auto getDependencies = [](const std::string& path) {
+        std::vector<std::string> deps;
+        std::string cmd = "ldd " + path;
+        //std::cout << "Running: " << cmd << std::endl;
+        
+        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+        if (!pipe) {
+            std::cerr << "Failed to run ldd: " << strerror(errno) << std::endl;
+            return deps;
+        }
+        
+        char buffer[512];
+        while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
+            std::string line(buffer);
+            // Look for => in ldd output
+            size_t arrow_pos = line.find("=>");
+            if (arrow_pos != std::string::npos) {
+                // Extract path after =>
+                size_t path_start = line.find('/', arrow_pos);
+                size_t path_end = line.find(" (", arrow_pos);
+                if (path_start != std::string::npos && path_end != std::string::npos) {
+                    std::string dep = line.substr(path_start, path_end - path_start);
+                    deps.push_back(dep);
+                    std::cout << "Found dependency: " << dep << std::endl;
+                }
+            }
+        }
+        return deps;
+    };
+    
+    // Helper function to check if address is in file
+    auto isAddressInFile = [](const std::string& path, const void* addr) {
+        //std::cout << "Checking if address " << addr << " is in " << path << std::endl;
+        
+        struct CallbackData {
+            const void* target_addr;
+            bool found;
+            std::string found_path;
+        };
+        
+        CallbackData data = {addr, false, ""};
+        
+        // Callback for dl_iterate_phdr
+        auto callback = [](struct dl_phdr_info* info, size_t size, void* data) {
+            auto params = static_cast<CallbackData*>(data);
+            const void* target_addr = params->target_addr;
+            
+            std::string lib_path = info->dlpi_name[0] ? info->dlpi_name : "/proc/self/exe";
+            //std::cout << "Checking segments in " << lib_path
+            //          << " at base address " << (void*)info->dlpi_addr << std::endl;
+            
+            for (int j = 0; j < info->dlpi_phnum; j++) {
+                const ElfW(Phdr)* phdr = &info->dlpi_phdr[j];
+                if (phdr->p_type == PT_LOAD) {
+                    void* start = (void*)(info->dlpi_addr + phdr->p_vaddr);
+                    void* end = (void*)((char*)start + phdr->p_memsz);
+                    //std::cout << "  Segment " << j << ": " << start << " - " << end << std::endl;
+                    
+                    if (target_addr >= start && target_addr < end) {
+                        //std::cout << "  Found address in this segment!" << std::endl;
+                        params->found = true;
+                        params->found_path = lib_path;
+                        return 1;  // Stop iteration
+                    }
+                }
+            }
+            return 0;  // Continue iteration
+        };
+        
+        dl_iterate_phdr(callback, &data);
+        
+        if (!data.found) {
+            //std::cout << "Address not found in " << path << std::endl;
+            return std::make_pair(false, std::string());
+        }
+        
+        return std::make_pair(true, data.found_path);
+    };
+    
+    while (!files_to_check.empty()) {
+        std::string current_file = files_to_check.front();
+        files_to_check.pop();
+        
+        if (checked_files.count(current_file)) {
+            //std::cout << "Already checked " << current_file << ", skipping" << std::endl;
+            continue;
+        }
+        
+        //std::cout << "\nChecking file: " << current_file << std::endl;
+        checked_files.insert(current_file);
+        
+        // Check if the function_address is in this file
+        auto [found, actual_path] = isAddressInFile(current_file, function_address);
+        if (found) {
+            char resolved_path[PATH_MAX];
+            if (realpath(actual_path.c_str(), resolved_path) != nullptr) {
+                std::string abs_path(resolved_path);
+                std::cout << "Found kernel in " << abs_path << std::endl;
+                return abs_path;
+            }
+            // If realpath fails, return the original path
+            std::cout << "Found kernel in " << actual_path << std::endl;
+            return actual_path;
+        }
+        // Add dependencies to queue
+        //std::cout << "Getting dependencies for " << current_file << std::endl;
+        for (const auto& dep : getDependencies(current_file)) {
+            if (!checked_files.count(dep)) {
+                //std::cout << "Adding to queue: " << dep << std::endl;
+                files_to_check.push(dep);
+            } else {
+                //std::cout << "Already checked dependency: " << dep << std::endl;
+            }
+        }
+    }
+    std::cerr << "Searched the following files for kernel address " << function_address << std::endl;
+    for (const auto& file : checked_files) {
+            std::cerr << "  " << file << std::endl;
+                }
+        std::abort();
+    }
 
 public:
     KernelManager() {}
@@ -441,6 +581,75 @@ public:
             std::cerr << "Unsupported kernel manager version in trace" << std::endl;
             throw std::runtime_error("Unsupported kernel manager version in trace");
         }
+    }
+
+    void addFromBinary(std::string object_file) {
+        // Check if object file already processed
+        if (std::find(object_files.begin(), object_files.end(), object_file) != object_files.end()) {
+            std::cerr << "KernelManager: Object file " << object_file << " already processed" << std::endl;
+            std::abort();
+        }
+        const_cast<KernelManager*>(this)->object_files.push_back(object_file);
+        
+        // Use nm to get symbol information from the object file
+        std::string cmd = "nm -C " + object_file + " | grep __device_stub_";
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) {
+            std::cerr << "Failed to run nm command: " << strerror(errno) << std::endl;
+            return;
+        }
+        
+        char buffer[1024];
+        std::vector<std::string> stub_signatures;
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            std::string line(buffer);
+            // Parse the nm output to extract function signature
+            std::regex signature_regex(R"(.*__device_stub_([^(]+)\((.*?)\))");
+            std::smatch matches;
+            if (std::regex_search(line, matches, signature_regex)) {
+                // matches[1] contains the kernel name (including namespace)
+                // matches[2] contains the argument list
+                auto signature = matches[1].str() + "(" + matches[2].str() + ")";
+                stub_signatures.push_back(signature);
+            }
+        }
+        
+        int status = pclose(pipe);
+        if (status == -1) {
+            std::cerr << "Failed to close pipe: " << strerror(errno) << std::endl;
+        }
+
+        // Create kernel objects for each signature found
+        for (const auto& signature : stub_signatures) {
+            // Check if kernel already exists
+            auto existing = std::find_if(kernels.begin(), kernels.end(),
+                [&](const Kernel& k) { return k.getSignature() == signature; });
+                
+            if (existing == kernels.end()) {
+                std::cout << "Creating kernel from signature: " << signature << std::endl;
+                Kernel kernel(signature);
+                const_cast<KernelManager*>(this)->kernels.push_back(kernel);
+            }
+        }
+
+        if (stub_signatures.empty()) {
+            std::cerr << "No kernel signatures found in binary " << object_file << std::endl;
+        } else {
+            std::cout << "Added " << stub_signatures.size() << " kernels from " << object_file << std::endl;
+        }
+    }
+
+    Kernel getKernelByPointer(const void* function_address) {
+        // First, search kernels by function_address
+        auto it = std::find_if(kernels.begin(), kernels.end(),
+            [&](const Kernel& k) { return k.getFunctionAddress() == function_address; });
+        if (it != kernels.end()) {
+            return *it;
+        }
+        // If not found, create kernels from binary device stubs
+        auto object_file = getKernelObjectFile(function_address);
+        addFromBinary(object_file); // this will abort if object_file is already processed
+        return getKernelByPointer(function_address);
     }
 
     void addFromModuleSource(const std::string& module_source) {
@@ -481,17 +690,12 @@ public:
     }
 
     Kernel getKernelByName(const std::string& name) const {
-        auto it = std::find_if(kernels.begin(), kernels.end(),
+        auto kernel_it = std::find_if(kernels.begin(), kernels.end(),
             [&](const Kernel& k) { return k.getName() == name; });
-            
-        if (it != kernels.end()) {
-            return *it;
-        }
         
-        return getKernelByNameMangled(name);
-    }
+        if (kernel_it != kernels.end())
+            return *kernel_it;
 
-    Kernel getKernelByNameMangled(const std::string& name) const {
         // Try to demangle the name first
         std::string demangled = demangle(name);
         
@@ -499,16 +703,19 @@ public:
         size_t pos = demangled.find('(');
         std::string kernel_name = pos != std::string::npos ? 
             demangled.substr(0, pos) : demangled;
-            
-        auto it = std::find_if(kernels.begin(), kernels.end(),
+        
+        kernel_it = std::find_if(kernels.begin(), kernels.end(),
             [&](const Kernel& k) { return k.getName() == kernel_name; });
-            
-        if (it == kernels.end()) {
+        
+        if (kernel_it == kernels.end()) {
             std::cerr << "No kernel found with name: " << kernel_name << std::endl;
-            std::abort();
+            std::cerr << "Available kernels: " << std::endl;
+            for (const auto& kernel : kernels) {
+                std::cerr << "  " << kernel.getName() << std::endl;
+            }
         }
         
-        return *it;
+        return *kernel_it;
     }
 
     // Add direct serialization methods for use in trace file

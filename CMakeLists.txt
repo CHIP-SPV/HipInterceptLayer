@@ -5,6 +5,10 @@ project(HIPInterceptLayer VERSION 1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(CMAKE_CXX_COMPILER hipcc)
+
+add_compile_options(-g)
+
 # Find HIP package and set up include paths
 find_package(HIP CONFIG REQUIRED)
 find_package(GTest REQUIRED)
@@ -30,6 +34,7 @@ target_link_libraries(unit_tests
   GTest::GTest
   GTest::Main
   HIPIntercept
+  dl
 )
 
 # Installation rules
