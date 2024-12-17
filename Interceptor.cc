@@ -281,8 +281,6 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     static uint64_t kernel_count = 0;
     exec.execution_order = kernel_count++;
 
-    assert(countKernelArgs(args) == kernel.getArguments().size());
-
     std::cout << "\nDEBUG: Processing kernel arguments:"
               << "\n  Total args: " << kernel.getArguments().size() << std::endl;
 

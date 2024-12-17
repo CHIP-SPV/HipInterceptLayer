@@ -718,21 +718,8 @@ public:
         const_cast<KernelManager*>(this)->object_files.push_back(object_file);
         
         // Get the base address where this object file is loaded
-        uintptr_t base_addr = 0;
-        dl_iterate_phdr([](dl_phdr_info* info, size_t size, void* data) {
-            auto base_addr_ptr = reinterpret_cast<uintptr_t*>(data);
-            if (info->dlpi_name && strlen(info->dlpi_name) > 0) {
-                char real_path[PATH_MAX];
-                if (realpath(info->dlpi_name, real_path)) {
-                    std::cout << "Checking " << real_path << " at base address " 
-                             << std::hex << info->dlpi_addr << std::dec << std::endl;
-                    *base_addr_ptr = info->dlpi_addr;
-                    return 1;  // Stop iteration once we find it
-                }
-            }
-            return 0;
-        }, &base_addr);
-
+        uintptr_t base_addr = getBaseAddr(object_file);
+        
         std::cout << "Object file loaded at base address: 0x" << std::hex << base_addr << std::dec << std::endl;
         
         // Use nm to get symbol information from the object file
@@ -813,17 +800,64 @@ public:
         pclose(pipe);
     }
 
-    Kernel getKernelByPointer(const void* function_address) {
+    uintptr_t getBaseAddr(const std::string& target_file) {
+        // Use the same logic as in addFromBinary to get the base address
+        struct CallbackData {
+            const std::string& target_file;
+            uintptr_t base_addr;
+        };
+        
+        CallbackData data = {target_file, 0};
+        
+        dl_iterate_phdr([](dl_phdr_info* info, size_t size, void* data_ptr) {
+            auto data = reinterpret_cast<CallbackData*>(data_ptr);
+            if (info->dlpi_name && strlen(info->dlpi_name) > 0) {
+                char real_path[PATH_MAX];
+                char target_real_path[PATH_MAX];    
+                
+                if (realpath(info->dlpi_name, real_path) && 
+                    realpath(data->target_file.c_str(), target_real_path)) {
+                    
+                    if (strcmp(real_path, target_real_path) == 0) {
+                        std::cout << "Found matching object file: " << real_path 
+                                  << " at base address: 0x" << std::hex << info->dlpi_addr << std::dec << std::endl;
+                        data->base_addr = info->dlpi_addr;
+                        return 1;  // Stop iteration
+                    }
+                }
+            }
+            return 0;
+        }, &data);
+        
+        if (data.base_addr == 0) {
+            std::cout << "Warning: Could not find base address for " << target_file << std::endl;
+            // Try /proc/self/exe if target file wasn't found
+            if (realpath("/proc/self/exe", nullptr) == target_file) {
+                dl_iterate_phdr([](dl_phdr_info* info, size_t size, void* data_ptr) {
+                    auto base_addr_ptr = reinterpret_cast<uintptr_t*>(data_ptr);
+                    if (!info->dlpi_name || strlen(info->dlpi_name) == 0) {  // Main executable has empty name
+                        *base_addr_ptr = info->dlpi_addr;
+                        return 1;
+                    }
+                    return 0;
+                }, &data.base_addr);
+            }
+        }
+        
+        return data.base_addr;
+    }
+
+    Kernel getKernelByPointer(const void* host_fund_addr) {
         // First, search kernels by function_address
         auto it = std::find_if(kernels.begin(), kernels.end(),
-            [&](const Kernel& k) { return k.getDeviceAddress() == function_address; });
+            [&](const Kernel& k) { return k.getHostAddress() == host_fund_addr; });
         if (it != kernels.end()) {
             return *it;
         }
         // If not found, create kernels from binary device stubs
-        auto object_file = getKernelObjectFile(function_address);
+        auto object_file = getKernelObjectFile(host_fund_addr);
         addFromBinary(object_file); // this will abort if object_file is already processed
-        return getKernelByPointer(function_address);
+        return getKernelByPointer(host_fund_addr);
     }
 
     void addFromModuleSource(const std::string& module_source) {
