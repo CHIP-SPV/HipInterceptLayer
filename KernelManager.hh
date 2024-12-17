@@ -11,6 +11,8 @@
 #include <queue>
 #include <link.h>
 #include <elf.h>
+#include <sstream>
+#include <iomanip>
 #define __HIP_PLATFORM_SPIRV__
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
@@ -179,7 +181,8 @@ class Kernel {
     std::string name;
     std::string signature;
     std::vector<Argument> arguments;
-    void* function_address;
+    void* host_address;
+    void* device_address;
 
     void parseKernelSource() {
         if (moduleSource.empty() || name.empty()) {
@@ -262,8 +265,20 @@ class Kernel {
         //std::cout << "Kernel source:\n" << kernelSource << std::endl;
     }
 public:
-    void* getFunctionAddress() const {
-        return function_address;
+    void* getHostAddress() const {
+        return host_address;
+    }
+
+    void setHostAdrress(void* addr) {
+        host_address = addr;
+    }
+
+    void* getDeviceAddress() const {
+        return device_address;
+    }
+
+    void setDeviceAddress(void* addr) {
+        device_address = addr;
     }
 
     std::vector<Argument>getArguments() const {
@@ -516,6 +531,8 @@ public:
         
         return kernel;
     }
+
+
 };
 
 class KernelManager {
@@ -698,6 +715,24 @@ public:
         }
         const_cast<KernelManager*>(this)->object_files.push_back(object_file);
         
+        // Get the base address where this object file is loaded
+        uintptr_t base_addr = 0;
+        dl_iterate_phdr([](dl_phdr_info* info, size_t size, void* data) {
+            auto base_addr_ptr = reinterpret_cast<uintptr_t*>(data);
+            if (info->dlpi_name && strlen(info->dlpi_name) > 0) {
+                char real_path[PATH_MAX];
+                if (realpath(info->dlpi_name, real_path)) {
+                    std::cout << "Checking " << real_path << " at base address " 
+                             << std::hex << info->dlpi_addr << std::dec << std::endl;
+                    *base_addr_ptr = info->dlpi_addr;
+                    return 1;  // Stop iteration once we find it
+                }
+            }
+            return 0;
+        }, &base_addr);
+
+        std::cout << "Object file loaded at base address: 0x" << std::hex << base_addr << std::dec << std::endl;
+        
         // Use nm to get symbol information from the object file
         std::string cmd = "nm -C " + object_file + " | grep __device_stub__";
         FILE* pipe = popen(cmd.c_str(), "r");
@@ -706,12 +741,44 @@ public:
             return;
         }
 
-        // call Kernel constructor for each line in nm output
         char buffer[1024];
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
             std::string line(buffer);
-            Kernel kernel(line);
+            
+            // Parse the nm output format: "address T symbol_name"
+            std::istringstream iss(line);
+            std::string addr_str;
+            std::string symbol_type;
+            std::string symbol_name;
+            
+            // Read the address, type, and symbol name
+            if (!(iss >> addr_str >> symbol_type)) {
+                std::cerr << "Failed to parse nm output line: " << line << std::endl;
+                continue;
+            }
+            
+            // Get the rest of the line as the symbol name
+            std::getline(iss >> std::ws, symbol_name);
+            
+            // Convert hex string to void* address and add base address
+            void* function_address = nullptr;
+            try {
+                uintptr_t addr = std::stoull(addr_str, nullptr, 16);
+                addr += base_addr;  // Add base address to get actual runtime address
+                function_address = reinterpret_cast<void*>(addr);
+            } catch (const std::exception& e) {
+                std::cerr << "Failed to convert address: " << addr_str << " - " << e.what() << std::endl;
+                continue;
+            }
+            
+            // Create kernel and associate the function address
+            Kernel kernel(symbol_name);
+            kernel.setHostAdrress(function_address);
             kernels.push_back(kernel);
+            
+            std::cout << "Added kernel: " << symbol_name 
+                      << " with address: " << std::hex << function_address 
+                      << std::dec << std::endl;
         }
         pclose(pipe);
     }
@@ -719,7 +786,7 @@ public:
     Kernel getKernelByPointer(const void* function_address) {
         // First, search kernels by function_address
         auto it = std::find_if(kernels.begin(), kernels.end(),
-            [&](const Kernel& k) { return k.getFunctionAddress() == function_address; });
+            [&](const Kernel& k) { return k.getHostAddress() == function_address; });
         if (it != kernels.end()) {
             return *it;
         }
