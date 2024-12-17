@@ -15,23 +15,6 @@ using namespace hip_intercept;
 std::unordered_map<void*, AllocationInfo> gpu_allocations;
 std::vector<Kernel> kernels;
 
-// Map to store function names for RTC kernels
-static std::unordered_map<hipFunction_t, std::string> rtc_kernel_names;
-// Map to store RTC program sources
-std::unordered_map<hiprtcProgram, std::string> rtc_program_sources;
-
-std::pair<void*, AllocationInfo*> findContainingAllocation(void* ptr) {
-    for (auto& [base_ptr, info] : gpu_allocations) {
-        char* start = static_cast<char*>(base_ptr);
-        char* end = start + info.size;
-        if (ptr >= base_ptr && ptr < end) {
-            return std::make_pair(base_ptr, &info);
-        }
-    }
-    return std::make_pair(nullptr, nullptr);
-}
-
-
 // Function pointer types
 typedef hipError_t (*hipMalloc_fn)(void**, size_t);
 typedef hipError_t (*hipMemcpy_fn)(void*, const void*, size_t, hipMemcpyKind);
@@ -543,8 +526,8 @@ hiprtcResult hiprtcCreateProgram(hiprtcProgram* prog,
                                                         numHeaders, headers, headerNames);
     
     if (result == HIPRTC_SUCCESS && prog && src) {
-        // Store source code for later reference
-        rtc_program_sources[*prog] = src;
+        // Store source code using KernelManager
+        Tracer::instance().getKernelManager().addRTCProgram(*prog, src);
         std::cout << "Stored RTC program source for handle " << *prog << std::endl;
 
         auto preprocessed_src = preprocess_source(src, numHeaders, headers, headerNames);
@@ -628,7 +611,7 @@ hipError_t hipMemset(void *dst, int value, size_t sizeBytes) {
     return hipMemset_impl(dst, value, sizeBytes);
 }
 
-// Update hipModuleLaunchKernel to be more defensive
+// Update hipModuleLaunchKernel to use KernelManager
 hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                  unsigned int gridDimY, unsigned int gridDimZ,
                                  unsigned int blockDimX, unsigned int blockDimY,
@@ -644,7 +627,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
               << "\n    stream=" << stream << "\n";
  
     // Get kernel info from KernelManager
-    std::string kernel_name = rtc_kernel_names[f];
+    std::string kernel_name = Tracer::instance().getKernelManager().getRTCKernelName(f);
     if (kernel_name.empty()) {
         std::cout << "No kernel name found for function handle " << f << std::endl;
         std::abort();
@@ -747,6 +730,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     return result;
 }
 
+// Update hipModuleGetFunction to use KernelManager
 hipError_t hipModuleGetFunction(hipFunction_t* function, hipModule_t module, const char* kname) {
     std::cout << "\n=== INTERCEPTED hipModuleGetFunction ===\n";
     std::cout << "hipModuleGetFunction(function=" << function 
@@ -756,8 +740,8 @@ hipError_t hipModuleGetFunction(hipFunction_t* function, hipModule_t module, con
     hipError_t result = get_real_hipModuleGetFunction()(function, module, kname);
     
     if (result == hipSuccess && function && *function) {
-        // Store the kernel name for this function handle
-        rtc_kernel_names[*function] = kname;
+        // Store the kernel name using KernelManager
+        Tracer::instance().getKernelManager().addRTCKernel(*function, kname);
         std::cout << "Stored RTC kernel name '" << kname 
                   << "' for function handle " << *function << std::endl;
     }

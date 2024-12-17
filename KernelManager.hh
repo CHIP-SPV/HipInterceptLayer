@@ -7,6 +7,10 @@
 #include <regex>
 #include <stack>
 #include <fstream>
+#include <unordered_map>
+#define __HIP_PLATFORM_SPIRV__
+#include <hip/hip_runtime.h>
+#include <hip/hiprtc.h>
 
 const uint32_t KRNL_MAGIC = 0x4B524E4C;
 const uint32_t KRNL_VERSION = 1;
@@ -405,6 +409,9 @@ public:
 
 class KernelManager {
     std::vector<Kernel> kernels;
+    std::unordered_map<hipFunction_t, std::string> rtc_kernel_names;
+    std::unordered_map<hiprtcProgram, std::string> rtc_program_sources;
+
 public:
     KernelManager() {}
     ~KernelManager() {}
@@ -554,6 +561,30 @@ public:
     }
 
     size_t getNumKernels() const { return kernels.size(); }
+
+    void addRTCKernel(hipFunction_t func, const std::string& name) {
+        rtc_kernel_names[func] = name;
+    }
+
+    std::string getRTCKernelName(hipFunction_t func) const {
+        auto it = rtc_kernel_names.find(func);
+        if (it != rtc_kernel_names.end()) {
+            return it->second;
+        }
+        return "";
+    }
+
+    void addRTCProgram(hiprtcProgram prog, const std::string& source) {
+        rtc_program_sources[prog] = source;
+    }
+
+    std::string getRTCProgramSource(hiprtcProgram prog) const {
+        auto it = rtc_program_sources.find(prog);
+        if (it != rtc_program_sources.end()) {
+            return it->second;
+        }
+        return "";
+    }
 };
 
 #endif // HIP_INTERCEPT_LAYER_KERNEL_MANAGER_HH
