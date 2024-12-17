@@ -269,7 +269,8 @@ public:
         return host_address;
     }
 
-    void setHostAdrress(void* addr) {
+    void setHostAddress(void* addr) {
+        std::cout << "Setting host address to: " << std::hex << addr << std::dec << std::endl;
         host_address = addr;
     }
 
@@ -278,6 +279,7 @@ public:
     }
 
     void setDeviceAddress(void* addr) {
+        std::cout << "Setting device address to: " << std::hex << addr << std::dec << std::endl;
         device_address = addr;
     }
 
@@ -760,25 +762,53 @@ public:
             // Get the rest of the line as the symbol name
             std::getline(iss >> std::ws, symbol_name);
             
-            // Convert hex string to void* address and add base address
-            void* function_address = nullptr;
+            // Convert hex string to void* address and add base address for device stub
+            void* device_address = nullptr;
             try {
                 uintptr_t addr = std::stoull(addr_str, nullptr, 16);
                 addr += base_addr;  // Add base address to get actual runtime address
-                function_address = reinterpret_cast<void*>(addr);
+                device_address = reinterpret_cast<void*>(addr);
             } catch (const std::exception& e) {
-                std::cerr << "Failed to convert address: " << addr_str << " - " << e.what() << std::endl;
+                std::cerr << "Failed to convert device address: " << addr_str << " - " << e.what() << std::endl;
                 continue;
             }
             
-            // Create kernel and associate the function address
+            // Create kernel and set device address
             Kernel kernel(symbol_name);
-            kernel.setHostAdrress(function_address);
-            kernels.push_back(kernel);
+            kernel.setDeviceAddress(device_address);
+                
+                // Look up the host function address
+                std::string host_cmd = "nm -C " + object_file + " | grep -w \"" + kernel.getName() + "\"";
+                std::cout << "Running host command: " << host_cmd << std::endl;
+                FILE* host_pipe = popen(host_cmd.c_str(), "r");
+                if (host_pipe) {
+                    char host_buffer[1024];
+                    if (fgets(host_buffer, sizeof(host_buffer), host_pipe)) {
+                        std::string host_line(host_buffer);
+                        std::istringstream host_iss(host_line);
+                        std::string host_addr_str;
+                        std::string host_symbol_type;
+                        std::cout << "host_line: " << host_line << std::endl;
+                        
+                        if (host_iss >> host_addr_str >> host_symbol_type) {
+                            try {
+                                uintptr_t host_addr = std::stoull(host_addr_str, nullptr, 16);
+                                host_addr += base_addr;
+                                void* host_address = reinterpret_cast<void*>(host_addr);
+                                kernel.setHostAddress(host_address);
+                                std::cout << "Found kernel '" << kernel.getName() << "'"
+                                          << "\n  device address: " << std::hex << device_address
+                                          << "\n  host address: " << host_address << std::dec << std::endl;
+                            } catch (const std::exception& e) {
+                                std::cerr << "Failed to convert host address: " << host_addr_str 
+                                          << " - " << e.what() << std::endl;
+                            }
+                        }
+                    }
+                    pclose(host_pipe);
+                }
             
-            std::cout << "Added kernel: " << symbol_name 
-                      << " with address: " << std::hex << function_address 
-                      << std::dec << std::endl;
+            kernels.push_back(kernel);
         }
         pclose(pipe);
     }
@@ -786,7 +816,7 @@ public:
     Kernel getKernelByPointer(const void* function_address) {
         // First, search kernels by function_address
         auto it = std::find_if(kernels.begin(), kernels.end(),
-            [&](const Kernel& k) { return k.getHostAddress() == function_address; });
+            [&](const Kernel& k) { return k.getDeviceAddress() == function_address; });
         if (it != kernels.end()) {
             return *it;
         }

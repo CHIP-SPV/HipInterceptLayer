@@ -577,6 +577,12 @@ hipError_t hipMalloc(void **ptr, size_t size) {
 hipError_t hipLaunchKernel(const void *function_address, dim3 numBlocks,
                           dim3 dimBlocks, void **args, size_t sharedMemBytes,
                           hipStream_t stream) {
+    std::cout << "\n=== INTERCEPTED hipLaunchKernel ===\n";
+    std::cout << "hipLaunchKernel(function_address=" << function_address 
+              << ", numBlocks={" << numBlocks.x << "," << numBlocks.y << "," << numBlocks.z << "}"
+              << ", dimBlocks={" << dimBlocks.x << "," << dimBlocks.y << "," << dimBlocks.z << "}"
+              << ", sharedMem=" << sharedMemBytes
+              << ", stream=" << stream << ")\n";
     return hipLaunchKernel_impl(function_address, numBlocks, dimBlocks, args, sharedMemBytes, stream);
 }
 
@@ -836,10 +842,6 @@ void hip_intercept_init() {
         if (g_should_intercept) {
             Interceptor::instance().setExePath(abs_path);
         }
-            
-        std::cout << "HIP Intercept Layer: " 
-                  << (g_should_intercept ? "Intercepting" : "Skipping") 
-                  << " process: " << exe_name << std::endl;
     }
 }
 
