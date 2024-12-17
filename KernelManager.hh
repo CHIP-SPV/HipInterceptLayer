@@ -277,6 +277,112 @@ public:
     }
     Kernel() {}
 
+    std::pair<std::string, std::vector<Argument>> getKernelInfo(std::string signature) const {
+        std::vector<Argument> args;
+        std::string kernel_name;
+
+        // Extract kernel name (everything up to the opening parenthesis)
+        size_t name_end = signature.find('(');
+        if (name_end != std::string::npos) {
+            kernel_name = signature.substr(0, name_end);
+            // Trim whitespace
+            kernel_name.erase(0, kernel_name.find_first_not_of(" "));
+            kernel_name.erase(kernel_name.find_last_not_of(" ") + 1);
+            std::cout << "Kernel name: " << kernel_name << std::endl;
+        }
+
+        // Extract arguments string (everything between parentheses)
+        size_t args_start = signature.find('(');
+        size_t args_end = signature.find_last_of(')');
+        if (args_start != std::string::npos && args_end != std::string::npos) {
+            std::string args_str = signature.substr(args_start + 1, args_end - args_start - 1);
+            
+            // Split arguments by comma
+            size_t pos = 0;
+            size_t next_pos;
+            while ((next_pos = args_str.find(',', pos)) != std::string::npos) {
+                std::string arg = args_str.substr(pos, next_pos - pos);
+                
+                // Trim whitespace
+                arg.erase(0, arg.find_first_not_of(" "));
+                arg.erase(arg.find_last_not_of(" ") + 1);
+                
+                // Handle types with * (pointers)
+                size_t asterisk_pos = arg.find('*');
+                if (asterisk_pos != std::string::npos) {
+                    std::string type = arg.substr(0, asterisk_pos + 1);
+                    std::string name = arg.substr(asterisk_pos + 1);
+                    
+                    // Trim whitespace
+                    type.erase(0, type.find_first_not_of(" "));
+                    type.erase(type.find_last_not_of(" ") + 1);
+                    name.erase(0, name.find_first_not_of(" "));
+                    name.erase(name.find_last_not_of(" ") + 1);
+                    
+                    if (name.empty()) {
+                        name = "arg" + std::to_string(args.size() + 1);
+                    }
+                    args.emplace_back(name, type);
+                } else {
+                    // Handle non-pointer types
+                    size_t last_space = arg.find_last_of(" ");
+                    std::string type, name;
+                    
+                    if (last_space != std::string::npos) {
+                        type = arg.substr(0, last_space);
+                        name = arg.substr(last_space + 1);
+                    } else {
+                        type = arg;
+                        name = "arg" + std::to_string(args.size() + 1);
+                    }
+                    
+                    args.emplace_back(name, type);
+                }
+                pos = next_pos + 1;
+            }
+            
+            // Handle last argument
+            std::string arg = args_str.substr(pos);
+            arg.erase(0, arg.find_first_not_of(" "));
+            arg.erase(arg.find_last_not_of(" ") + 1);
+            
+            // Handle types with * (pointers)
+            size_t asterisk_pos = arg.find('*');
+            if (asterisk_pos != std::string::npos) {
+                std::string type = arg.substr(0, asterisk_pos + 1);
+                std::string name = arg.substr(asterisk_pos + 1);
+                
+                // Trim whitespace
+                type.erase(0, type.find_first_not_of(" "));
+                type.erase(type.find_last_not_of(" ") + 1);
+                name.erase(0, name.find_first_not_of(" "));
+                name.erase(name.find_last_not_of(" ") + 1);
+                
+                if (name.empty()) {
+                    name = "arg" + std::to_string(args.size() + 1);
+                }
+                args.emplace_back(name, type);
+            } else {
+                // Handle non-pointer types
+                size_t last_space = arg.find_last_of(" ");
+                std::string type, name;
+                
+                if (last_space != std::string::npos) {
+                    type = arg.substr(0, last_space);
+                    name = arg.substr(last_space + 1);
+                } else {
+                    type = arg;
+                    name = "arg" + std::to_string(args.size() + 1);
+                }
+                
+                args.emplace_back(name, type);
+            }
+        }
+
+        
+        return {kernel_name, args};
+    }
+
     Kernel(std::string signature) {
         std::cout << "\nParsing kernel signature: " << signature << std::endl;
         
@@ -291,33 +397,7 @@ public:
         this->signature.erase(0, this->signature.find_first_not_of(" "));
         this->signature.erase(this->signature.find_last_not_of(" ") + 1);
 
-        size_t nameEnd = signature.find('(');
-        if (nameEnd != std::string::npos) {
-            // Extract everything after __global__ void
-            std::string afterGlobal = signature.substr(signature.find("void") + 4);
-            // Extract just the kernel name
-            this->name = afterGlobal.substr(0, afterGlobal.find('(')); 
-            // Trim any whitespace
-            this->name.erase(0, this->name.find_first_not_of(" "));
-            this->name.erase(this->name.find_last_not_of(" ") + 1);
-        }
-        std::cout << "  Kernel name: " << this->name << std::endl;
-        std::cout << "  Kernel signature: " << this->signature << std::endl;
-
-        // Parse arguments
-        std::regex arg_regex(R"((\w+(?:\s*\*\s*(?:__restrict__)?)?)\s+(\w+)(?:\s*,|\s*\)))");
-        std::string args = signature.substr(nameEnd + 1);
-        std::sregex_iterator it(args.begin(), args.end(), arg_regex);
-        std::sregex_iterator end;
-        
-        std::cout << "  Parsing arguments..." << std::endl;
-        while (it != end) {
-            std::smatch match = *it;
-            arguments.push_back(Argument(match[2].str(), match[1].str()));
-            ++it;
-        }
-
-        std::cout << "  Found " << arguments.size() << " arguments" << std::endl;
+        std::tie(name, arguments) = getKernelInfo(signature);
     }
 
     void serialize(std::ofstream& file) const {
@@ -592,7 +672,7 @@ public:
         const_cast<KernelManager*>(this)->object_files.push_back(object_file);
         
         // Use nm to get symbol information from the object file
-        std::string cmd = "nm -C " + object_file + " | grep __device_stub_";
+        std::string cmd = "nm -C " + object_file + " | grep __device_stub__";
         FILE* pipe = popen(cmd.c_str(), "r");
         if (!pipe) {
             std::cerr << "Failed to run nm command: " << strerror(errno) << std::endl;
@@ -604,7 +684,7 @@ public:
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
             std::string line(buffer);
             // Parse the nm output to extract function signature
-            std::regex signature_regex(R"(.*__device_stub_([^(]+)\((.*?)\))");
+            std::regex signature_regex(R"(.*__device_stub__([^(]+)\((.*?)\))");
             std::smatch matches;
             if (std::regex_search(line, matches, signature_regex)) {
                 // matches[1] contains the kernel name (including namespace)
