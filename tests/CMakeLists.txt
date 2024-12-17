@@ -5,6 +5,11 @@ add_executable(unit_tests
   testCodeGen.cpp
 )
 
+# Add compile definition for build directory path
+target_compile_definitions(unit_tests PRIVATE
+  CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
 # Compile test kernels
 add_executable(test_kernels data/Kernels.cpp)
 
@@ -28,11 +33,15 @@ target_link_libraries(unit_tests
 
 # Add custom target to run test_kernels with LD_PRELOAD
 add_custom_target(run_test_kernels
+    COMMAND ${CMAKE_COMMAND} -E remove -f test_kernels-0.trace
     COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:test_kernels>
     DEPENDS test_kernels HIPIntercept
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Running test_kernels with HIPIntercept preloaded"
 )
+
+# Make test_kernels.trace available for unit tests
+add_dependencies(unit_tests run_test_kernels)
 
 # Make sure run_test_kernels is built by default
 add_custom_target(all_tests ALL DEPENDS run_test_kernels)

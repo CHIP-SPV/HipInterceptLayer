@@ -72,78 +72,58 @@ protected:
     }
 };
 
-TEST_F(KernelManagerTest, SerializationTest) {
-    // Add kernels to manager
-    manager.addFromModuleSource(test_source);
-    ASSERT_EQ(manager.getNumKernels(), 4);
-
-    // Serialize to temporary file
-    std::string temp_filename = "test_kernels.bin";
-    {
-        std::ofstream outfile(temp_filename, std::ios::binary);
-        ASSERT_TRUE(outfile.is_open());
-        manager.serialize(outfile);
-    }
-
-    // Create new manager and deserialize
-    KernelManager new_manager;
-    {
-        std::ifstream infile(temp_filename, std::ios::binary);
-        ASSERT_TRUE(infile.is_open());
-        new_manager.deserialize(infile);
-    }
-
-    // Verify kernel count
-    ASSERT_EQ(new_manager.getNumKernels(), 4);
-
-    // Verify first kernel (simpleKernel)
-    Kernel simple = new_manager.getKernelByName("simpleKernel");
-    EXPECT_EQ(simple.getName(), "simpleKernel");
-    EXPECT_EQ(simple.getArguments().size(), 2);
-    EXPECT_EQ(simple.getArguments()[0].getName(), "a");
-    EXPECT_EQ(simple.getArguments()[0].getType(), "int*");
-    EXPECT_EQ(simple.getArguments()[1].getName(), "b");
-    EXPECT_EQ(simple.getArguments()[1].getType(), "float");
-
-    // Verify second kernel (complexKernel)
-    Kernel complex = new_manager.getKernelByName("complexKernel");
-    EXPECT_EQ(complex.getName(), "complexKernel");
-    EXPECT_EQ(complex.getArguments().size(), 3);
-    EXPECT_EQ(complex.getArguments()[0].getName(), "vectors");
-    EXPECT_EQ(complex.getArguments()[0].getType(), "float4*");
-    EXPECT_EQ(complex.getArguments()[1].getName(), "results");
-    EXPECT_EQ(complex.getArguments()[1].getType(), "double*");
-    EXPECT_EQ(complex.getArguments()[2].getName(), "n");
-    EXPECT_EQ(complex.getArguments()[2].getType(), "int");
-
-    // Verify third kernel (matrixMulKernel)
-    Kernel matrix = new_manager.getKernelByName("matrixMulKernel");
-    EXPECT_EQ(matrix.getName(), "matrixMulKernel");
-    EXPECT_EQ(matrix.getArguments().size(), 4);
-    EXPECT_EQ(matrix.getArguments()[0].getName(), "A");
-    EXPECT_EQ(matrix.getArguments()[0].getType(), "float*");
-    EXPECT_EQ(matrix.getArguments()[1].getName(), "B");
-    EXPECT_EQ(matrix.getArguments()[1].getType(), "float*");
-    EXPECT_EQ(matrix.getArguments()[2].getName(), "C");
-    EXPECT_EQ(matrix.getArguments()[2].getType(), "float*");
-    EXPECT_EQ(matrix.getArguments()[3].getName(), "N");
-    EXPECT_EQ(matrix.getArguments()[3].getType(), "int");
-
-    // Verify fourth kernel (vectorAddKernel)
-    Kernel vector = new_manager.getKernelByName("vectorAddKernel");
-    EXPECT_EQ(vector.getName(), "vectorAddKernel");
+TEST_F(KernelManagerTest, TraceFileTest) {
+    // Load the trace file generated during build
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    
+    // Create a Tracer instance to read the trace file
+    Tracer tracer(trace_file);
+    
+    // Get the KernelManager from the trace
+    const KernelManager& traced_manager = tracer.getKernelManager();
+    
+    // Verify we have the expected kernels
+    ASSERT_EQ(traced_manager.getNumKernels(), 4);
+    
+    // Verify vectorAdd kernel
+    Kernel vector = traced_manager.getKernelByName("vectorAdd");
+    EXPECT_EQ(vector.getName(), "vectorAdd");
     EXPECT_EQ(vector.getArguments().size(), 4);
-    EXPECT_EQ(vector.getArguments()[0].getName(), "a");
+    EXPECT_EQ(vector.getArguments()[0].getName(), "arg1");
     EXPECT_EQ(vector.getArguments()[0].getType(), "float*");
-    EXPECT_EQ(vector.getArguments()[1].getName(), "b");
+    EXPECT_EQ(vector.getArguments()[1].getName(), "arg2");
     EXPECT_EQ(vector.getArguments()[1].getType(), "float*");
-    EXPECT_EQ(vector.getArguments()[2].getName(), "c");
+    EXPECT_EQ(vector.getArguments()[2].getName(), "arg3");
     EXPECT_EQ(vector.getArguments()[2].getType(), "float*");
-    EXPECT_EQ(vector.getArguments()[3].getName(), "n");
+    EXPECT_EQ(vector.getArguments()[3].getName(), "arg4");
     EXPECT_EQ(vector.getArguments()[3].getType(), "int");
 
-    // Clean up
-    std::remove(temp_filename.c_str());
+    // Verify scalarKernel
+    Kernel scalar = traced_manager.getKernelByName("scalarKernel");
+    EXPECT_EQ(scalar.getName(), "scalarKernel");
+    EXPECT_EQ(scalar.getArguments().size(), 3);
+    EXPECT_EQ(scalar.getArguments()[0].getName(), "arg1");
+    EXPECT_EQ(scalar.getArguments()[0].getType(), "float*");
+    EXPECT_EQ(scalar.getArguments()[1].getName(), "arg2");
+    EXPECT_EQ(scalar.getArguments()[1].getType(), "int");
+    EXPECT_EQ(scalar.getArguments()[2].getName(), "arg3");
+    EXPECT_EQ(scalar.getArguments()[2].getType(), "float");
+
+    // Verify simpleKernel
+    Kernel simple = traced_manager.getKernelByName("simpleKernel");
+    EXPECT_EQ(simple.getName(), "simpleKernel");
+    EXPECT_EQ(simple.getArguments().size(), 1);
+    EXPECT_EQ(simple.getArguments()[0].getName(), "arg1");
+    EXPECT_EQ(simple.getArguments()[0].getType(), "float*");
+
+    // Verify simpleKernelWithN
+    Kernel simpleN = traced_manager.getKernelByName("simpleKernelWithN");
+    EXPECT_EQ(simpleN.getName(), "simpleKernelWithN");
+    EXPECT_EQ(simpleN.getArguments().size(), 2);
+    EXPECT_EQ(simpleN.getArguments()[0].getName(), "arg1");
+    EXPECT_EQ(simpleN.getArguments()[0].getType(), "float*");
+    EXPECT_EQ(simpleN.getArguments()[1].getName(), "arg2");
+    EXPECT_EQ(simpleN.getArguments()[1].getType(), "int");
 }
 
 TEST_F(KernelManagerTest, InvalidDeserialization) {

@@ -42,6 +42,7 @@ public:
     std::string type;
     size_t size;
     bool is_pointer;
+    bool is_vector;
     Argument(std::string name, std::string type) {
         if (name.empty() || type.empty()) {
             std::cerr << "Warning: Creating argument with empty name or type" << std::endl;
@@ -50,6 +51,7 @@ public:
         this->type = type;
         this->size = isVector() ? 16 : sizeof(void*);
         this->is_pointer = type.find("*") != std::string::npos;
+        this->is_vector = isVector();
         std::cout << "    Argument: " << this->type << " " << this->name 
                   << " (size: " << this->size << ")" << std::endl;
     }
@@ -107,71 +109,40 @@ public:
     }
 
     void serialize(std::ofstream& file) const {
-        uint32_t name_len = name.length();
-        uint32_t type_len = type.length();
+        std::cout << "Serializing argument: " << name << " (" << type << ")" << std::endl;
+        // Write the argument name
+        uint32_t name_length = name.length();
+        file.write(reinterpret_cast<const char*>(&name_length), sizeof(uint32_t));
+        file.write(name.c_str(), name_length);
         
-        //std::cout << "Serializing argument - Name: '" << name << "' (len=" << name_len 
-        //          << "), Type: '" << type << "' (len=" << type_len << ")" << std::endl;
+        // Write the type
+        uint32_t type_length = type.length();
+        file.write(reinterpret_cast<const char*>(&type_length), sizeof(uint32_t));
+        file.write(type.c_str(), type_length);
         
-        file.write(reinterpret_cast<const char*>(&name_len), sizeof(uint32_t));
-        file.write(reinterpret_cast<const char*>(&type_len), sizeof(uint32_t));
-        
-        file.write(name.c_str(), name_len);
-        file.write(type.c_str(), type_len);
-        
+        // Write other properties
         file.write(reinterpret_cast<const char*>(&size), sizeof(size_t));
         file.write(reinterpret_cast<const char*>(&is_pointer), sizeof(bool));
+        file.write(reinterpret_cast<const char*>(&is_vector), sizeof(bool));
     }
 
-    static Argument deserialize(std::ifstream& file) {
-        uint32_t name_len, type_len;
-        file.read(reinterpret_cast<char*>(&name_len), sizeof(uint32_t));
-        file.read(reinterpret_cast<char*>(&type_len), sizeof(uint32_t));
+    void deserialize(std::ifstream& file) {
+        // Read the argument name
+        uint32_t name_length;
+        file.read(reinterpret_cast<char*>(&name_length), sizeof(uint32_t));
+        name.resize(name_length);
+        file.read(&name[0], name_length);
         
-        std::cout << "Reading strings with lengths: name_len=" << name_len 
-                  << ", type_len=" << type_len << std::endl;
+        // Read the type
+        uint32_t type_length;
+        file.read(reinterpret_cast<char*>(&type_length), sizeof(uint32_t));
+        type.resize(type_length);
+        file.read(&type[0], type_length);
         
-        if (name_len > 1000 || type_len > 1000) {
-            std::cerr << "Warning: Suspiciously large string lengths detected" << std::endl;
-            throw std::runtime_error("Invalid string lengths in deserialization");
-        }
-        
-        // Create vectors to hold the string data
-        std::vector<char> name_buffer(name_len + 1, '\0');  // +1 for null termination
-        std::vector<char> type_buffer(type_len + 1, '\0');
-        
-        // Read the string data into the buffers
-        file.read(name_buffer.data(), name_len);
-        file.read(type_buffer.data(), type_len);
-        
-        // Debug output of raw data
-        std::cout << "Raw name buffer: ";
-        for (size_t i = 0; i < name_len && i < 20; ++i) {
-            std::cout << std::hex << (int)(unsigned char)name_buffer[i] << " ";
-        }
-        std::cout << std::dec << std::endl;
-        
-        std::cout << "Raw type buffer: ";
-        for (size_t i = 0; i < type_len && i < 20; ++i) {
-            std::cout << std::hex << (int)(unsigned char)type_buffer[i] << " ";
-        }
-        std::cout << std::dec << std::endl;
-        
-        // Convert to strings
-        std::string name(name_buffer.data(), name_len);
-        std::string type(type_buffer.data(), type_len);
-        
-        std::cout << "String lengths after conversion: name=" << name.length() 
-                  << ", type=" << type.length() << std::endl;
-        
-        // Create argument with the read data
-        Argument arg(name, type);
-        
-        // Read the remaining fields
-        file.read(reinterpret_cast<char*>(&arg.size), sizeof(size_t));
-        file.read(reinterpret_cast<char*>(&arg.is_pointer), sizeof(bool));
-        
-        return arg;
+        // Read other properties
+        file.read(reinterpret_cast<char*>(&size), sizeof(size_t));
+        file.read(reinterpret_cast<char*>(&is_pointer), sizeof(bool));
+        file.read(reinterpret_cast<char*>(&is_vector), sizeof(bool));
     }
 };
 
@@ -528,7 +499,12 @@ public:
         kernel.arguments.reserve(num_args);
         
         for (uint32_t i = 0; i < num_args; i++) {
-            kernel.arguments.push_back(Argument::deserialize(file));
+            // Create a temporary argument with placeholder values
+            Argument arg("", "");
+            // Deserialize into the temporary argument
+            arg.deserialize(file);
+            // Add the deserialized argument to the kernel
+            kernel.arguments.push_back(std::move(arg));
         }
         
         return kernel;
