@@ -20,14 +20,43 @@ public:
     size_t size;
     std::unique_ptr<char[]> shadow_copy;
     
-    explicit AllocationInfo(size_t s) : size(s), shadow_copy(new char[s]) {}
+    AllocationInfo(size_t s) : size(s), shadow_copy(new char[s]) {}
 };
 
-// Global state - declare extern variable
-extern std::unordered_map<void*, AllocationInfo> gpu_allocations;
+class Interceptor {
+    std::unordered_map<void*, AllocationInfo> gpu_allocations;
 
-// Helper function declarations
-std::pair<void*, AllocationInfo*> findContainingAllocation(void* ptr);
+public:
+    static Interceptor& instance() {
+        static Interceptor instance;
+        return instance;
+    }
+
+    ~Interceptor() {
+        gpu_allocations.clear();
+    }
+
+    AllocationInfo& addAllocation(void* ptr, size_t size) {
+        auto [it, inserted] = gpu_allocations.emplace(ptr, AllocationInfo(size));
+        return it->second;
+    }
+
+    void removeAllocation(void* ptr) {
+        auto it = gpu_allocations.find(ptr);
+        if (it != gpu_allocations.end()) {
+            gpu_allocations.erase(it);
+        }
+    }
+
+    std::pair<void*, AllocationInfo*> findContainingAllocation(void* ptr) {
+        auto it = gpu_allocations.find(ptr);
+        if (it != gpu_allocations.end()) {
+            return std::make_pair(it->first, &it->second);
+        }
+        std::cerr << "Allocation not found for pointer: " << ptr << std::endl;
+        return std::make_pair(nullptr, nullptr);
+    }
+};
 
 // External C interface declarations
 extern "C" {

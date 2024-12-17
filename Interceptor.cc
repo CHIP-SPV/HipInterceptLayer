@@ -12,9 +12,6 @@
 
 using namespace hip_intercept;
 
-std::unordered_map<void*, AllocationInfo> gpu_allocations;
-std::vector<Kernel> kernels;
-
 // Function pointer types
 typedef hipError_t (*hipMalloc_fn)(void**, size_t);
 typedef hipError_t (*hipMemcpy_fn)(void*, const void*, size_t, hipMemcpyKind);
@@ -203,7 +200,7 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes, h
     
     // Capture pre-copy state if destination is GPU memory
     if (kind != hipMemcpyHostToHost) {
-        auto [base_ptr, info] = findContainingAllocation(dst);
+        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
             memcpy(op.pre_state->data.get(), info->shadow_copy.get(), sizeBytes);
@@ -215,7 +212,7 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes, h
     
     // Capture post-copy state
     if (kind != hipMemcpyHostToHost) {
-        auto [base_ptr, info] = findContainingAllocation(dst);
+        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
             memcpy(op.post_state->data.get(), info->shadow_copy.get(), sizeBytes);
@@ -244,7 +241,7 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
     op.post_state = std::make_shared<hip_intercept::MemoryState>(sizeBytes);
     
     // Capture pre-set state
-    auto [base_ptr, info] = findContainingAllocation(dst);
+    auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
     if (base_ptr && info) {
         createShadowCopy(base_ptr, *info);
         memcpy(op.pre_state->data.get(), info->shadow_copy.get(), sizeBytes);
@@ -307,7 +304,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
             std::cout << "DEBUG: Found pointer argument:"
                       << "\n  Device ptr: " << device_ptr << std::endl;
             
-            auto [base_ptr, info] = findContainingAllocation(device_ptr);
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
             if (base_ptr && info) {
                 std::cout << "DEBUG: Creating shadow copy for arg " << i
                           << "\n  Base ptr: " << base_ptr
@@ -338,7 +335,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     
     for (size_t i = 0; i < exec.arg_ptrs.size(); i++) {
         void* device_ptr = exec.arg_ptrs[i];
-        auto [base_ptr, info] = findContainingAllocation(device_ptr);
+        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
         if (base_ptr && info) {
             std::cout << "DEBUG: Creating post-exec shadow copy for arg " << i
                       << "\n  Base ptr: " << base_ptr
@@ -560,7 +557,7 @@ hipError_t hipMalloc(void **ptr, size_t size) {
         op.dst = *ptr;
         
         // First create the allocation info
-        auto& info = gpu_allocations.emplace(*ptr, AllocationInfo(size)).first->second;
+        auto& info = Interceptor::instance().addAllocation(*ptr, size);
         
         // Create and capture initial state
         op.pre_state = std::make_shared<hip_intercept::MemoryState>(size);
@@ -590,14 +587,8 @@ hipError_t hipDeviceSynchronize(void) {
 }
 
 hipError_t hipFree(void* ptr) {
-    if (ptr) {
-        auto it = gpu_allocations.find(ptr);
-        if (it != gpu_allocations.end()) {
-            std::cout << "Removing tracked GPU allocation at " << ptr 
-                     << " of size " << it->second.size << std::endl;
-            gpu_allocations.erase(it);
-        }
-    }
+    if (ptr)
+        Interceptor::instance().removeAllocation(ptr);
     return get_real_hipFree()(ptr);
 }
 
@@ -669,7 +660,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                       << "\n  Device ptr: " << device_ptr << std::endl;
             
             // Try to capture pre-execution state
-            auto [base_ptr, info] = findContainingAllocation(device_ptr);
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
             if (base_ptr && info) {
                 std::cout << "DEBUG: Creating shadow copy for arg " << i
                           << "\n  Base ptr: " << base_ptr
@@ -705,7 +696,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
         const auto& arg = arguments[i];
         if (arg.getType().find("*") != std::string::npos && !arg.isVector()) {
             void* device_ptr = *(void**)kernelParams[i];
-            auto [base_ptr, info] = findContainingAllocation(device_ptr);
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
             if (base_ptr && info) {
                 std::cout << "DEBUG: Creating post-exec shadow copy for arg " << i
                           << "\n  Base ptr: " << base_ptr
@@ -776,7 +767,7 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
 
     // For device-to-host or device-to-device copies, capture pre-state
     if (kind == hipMemcpyDeviceToHost || kind == hipMemcpyDeviceToDevice) {
-        auto [base_ptr, info] = findContainingAllocation(const_cast<void*>(src));
+        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(const_cast<void*>(src));
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
             op.pre_state = std::make_shared<hip_intercept::MemoryState>(
@@ -792,7 +783,7 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
 
     // For host-to-device or device-to-device copies, capture post-state
     if (kind == hipMemcpyHostToDevice || kind == hipMemcpyDeviceToDevice) {
-        auto [base_ptr, info] = findContainingAllocation(dst);
+        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
             op.post_state = std::make_shared<hip_intercept::MemoryState>(
