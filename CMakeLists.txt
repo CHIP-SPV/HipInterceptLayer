@@ -22,26 +22,14 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # Build libraries and executable
 add_library(HIPIntercept SHARED Interceptor.cc Tracer.cc)
-add_executable(HipInterceptCompare Comparator.cc Tracer.cc)
+add_executable(HIPInterceptCompare Comparator.cc Tracer.cc)
 
-# Add test executable
-add_executable(unit_tests
-  tests/testKernelManager.cpp Tracer.cc
-  tests/testCodeGen.cpp
-)
-
-target_link_libraries(unit_tests
-  PRIVATE
-  GTest::GTest
-  GTest::Main
-  HIPIntercept
-  dl
-)
-
+add_subdirectory(tests)
+add_dependencies(unit_tests HIPIntercept HIPInterceptCompare)
 # Installation rules
 include(GNUInstallDirs)
 
-install(TARGETS HIPIntercept HipInterceptCompare
+install(TARGETS HIPIntercept HIPInterceptCompare
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -54,8 +42,3 @@ install(FILES
     Comparator.hh
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hip-intercept
 )
-
-enable_testing()
-gtest_discover_tests(unit_tests)
-
-
