@@ -46,6 +46,7 @@ add_dependencies(unit_tests run_test_kernels)
 # Make sure run_test_kernels is built by default
 add_custom_target(all_tests ALL DEPENDS run_test_kernels)
 
+# Make sure the trace file exists before running tests
+add_dependencies(unit_tests run_test_kernels)
 
-enable_testing()
 gtest_discover_tests(unit_tests)

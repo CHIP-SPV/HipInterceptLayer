@@ -23,7 +23,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 # Build libraries and executable
 add_library(HIPIntercept SHARED Interceptor.cc Tracer.cc)
 add_executable(HIPInterceptCompare Comparator.cc Tracer.cc)
-
+enable_testing()
 add_subdirectory(tests)
 add_dependencies(unit_tests HIPIntercept HIPInterceptCompare)
 # Installation rules
