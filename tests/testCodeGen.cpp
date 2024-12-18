@@ -22,24 +22,11 @@ TEST(CodeGenTest, BasicCodeGeneration) {
     // Load the trace file generated during build
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
     Tracer tracer(trace_file);
-    
-    // Get the first vectorAdd kernel execution from the trace
-    const auto& trace = tracer.instance().trace_;
     const auto& kernel_manager = tracer.getKernelManager();
-    std::cout << trace;
-    
-    // Find the first vectorAdd execution
-    auto it = std::find_if(trace.kernel_executions.begin(), trace.kernel_executions.end(),
-        [](const KernelExecution& exec) { 
-            std::cout << "Kernel name: " << exec.kernel_name << std::endl;
-            return exec.kernel_name == "vectorAdd"; 
-        });
-    
-    ASSERT_NE(it, trace.kernel_executions.end()) << "vectorAdd kernel execution not found in trace";
     
     // Generate code using the traced execution
-    CodeGen code_gen(trace, kernel_manager);
-    std::string generated_code = code_gen.generateReproducer();
+    CodeGen code_gen(trace_file, kernel_manager);
+    std::string generated_code = code_gen.generateReproducer(0);
     saveAndPrintCode("basic_codegen", generated_code);
     
     // Basic verification
@@ -60,110 +47,51 @@ TEST(CodeGenTest, BasicCodeGeneration) {
 }
 
 TEST(CodeGenTest, KernelWithScalarArguments) {
-    // Load the trace file
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
     Tracer tracer(trace_file);
-
-    // Find the first scalarKernel execution
-    const auto& trace = tracer.instance().trace_;
     const auto& kernel_manager = tracer.getKernelManager();
     
-    auto it = std::find_if(trace.kernel_executions.begin(), trace.kernel_executions.end(),
-        [](const KernelExecution& exec) { return exec.kernel_name == "scalarKernel"; });
+    CodeGen code_gen(trace_file, kernel_manager);
     
-    ASSERT_NE(it, trace.kernel_executions.end()) << "scalarKernel execution not found in trace";
-
-    // Create a trace with just this execution
-    Trace single_exec_trace;
-    single_exec_trace.kernel_executions.push_back(*it);
-
-    // Generate code
-    CodeGen code_gen(single_exec_trace, kernel_manager);
-    std::string generated_code = code_gen.generateReproducer();
+    // Find the operation index for scalarKernel
+    int scalar_kernel_index = -1;
+    const auto& executions = tracer.instance().trace_.kernel_executions;
+    for (size_t i = 0; i < executions.size(); i++) {
+        if (executions[i].kernel_name == "scalarKernel") {
+            scalar_kernel_index = i;
+            break;
+        }
+    }
+    
+    ASSERT_NE(scalar_kernel_index, -1) << "scalarKernel not found in trace";
+    
+    std::string generated_code = code_gen.generateReproducer(scalar_kernel_index);
     saveAndPrintCode("scalar_arguments", generated_code);
-
+    
     // Verify scalar parameter declarations and initialization
     EXPECT_TRUE(generated_code.find("int arg_1_scalarKernel;") != std::string::npos);
     EXPECT_TRUE(generated_code.find("float arg_2_scalarKernel;") != std::string::npos);
     
-    // Update these expectations to match the new reinterpret_cast format
-    EXPECT_TRUE(generated_code.find("memcpy(&arg_1_scalarKernel, reinterpret_cast<const int*>(trace_data_1)") != std::string::npos);
-    EXPECT_TRUE(generated_code.find("memcpy(&arg_2_scalarKernel, reinterpret_cast<const float*>(trace_data_2)") != std::string::npos);
-}
-
-TEST(CodeGenTest, MultipleKernelLaunches) {
-    std::string kernel_source = test_kernels::kernel_strings::simple_kernel;
-
-    KernelManager kernel_manager;
-    kernel_manager.addFromModuleSource(kernel_source);
-
-    Trace trace;
-    
-    // First kernel execution
-    KernelExecution exec1;
-    exec1.kernel_name = "simpleKernel";
-    exec1.grid_dim = dim3(1, 1, 1);
-    exec1.block_dim = dim3(64, 1, 1);
-    exec1.shared_mem = 0;
-    exec1.pre_state.push_back(MemoryState(64 * sizeof(float)));
-    
-    // Second kernel execution
-    KernelExecution exec2 = exec1;  // Same kernel, different launch config
-    exec2.block_dim = dim3(128, 1, 1);
-    
-    trace.kernel_executions.push_back(exec1);
-    trace.kernel_executions.push_back(exec2);
-
-    CodeGen code_gen(trace, kernel_manager);
-    std::string generated_code = code_gen.generateReproducer();
-    saveAndPrintCode("multiple_launches", generated_code);
-
-    // Verify multiple kernel launches
-    size_t first_launch = generated_code.find("simpleKernel<<<");
-    size_t second_launch = generated_code.find("simpleKernel<<<", first_launch + 1);
-    EXPECT_NE(first_launch, std::string::npos);
-    EXPECT_NE(second_launch, std::string::npos);
-    EXPECT_NE(first_launch, second_launch);
+    // Verify data loading
+    EXPECT_TRUE(generated_code.find("loadTraceData(trace_file,") != std::string::npos);
+    EXPECT_TRUE(generated_code.find("sizeof(int), &arg_1_scalarKernel)") != std::string::npos);
+    EXPECT_TRUE(generated_code.find("sizeof(float), &arg_2_scalarKernel)") != std::string::npos);
 }
 
 TEST(CodeGenTest, GenerateAndCompile) {
-    std::string kernel_source = test_kernels::kernel_strings::simple_kernel_with_n;
-
-    KernelManager kernel_manager;
-    kernel_manager.addFromModuleSource(kernel_source);
-
-    Trace trace;
-    KernelExecution exec;
-    exec.kernel_name = "simpleKernel";
-    exec.grid_dim = dim3(1, 1, 1);
-    exec.block_dim = dim3(64, 1, 1);
-    exec.shared_mem = 0;
-    
-    // Create sample data for the float array
-    size_t array_size = 64 * sizeof(float);
-    std::vector<float> sample_data(64, 1.0f);
-    for (size_t i = 0; i < sample_data.size(); i++) {
-        sample_data[i] = static_cast<float>(i);
-    }
-    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(sample_data.data()), array_size));
-    
-    // Add scalar argument
-    int n_value = 64;
-    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(&n_value), sizeof(int)));
-    exec.arg_sizes.push_back(array_size);
-    exec.arg_sizes.push_back(sizeof(int));
-    
-    trace.kernel_executions.push_back(exec);
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    Tracer tracer(trace_file);
+    const auto& kernel_manager = tracer.getKernelManager();
 
     // Create a temporary directory for test outputs
     std::string test_dir = "/tmp/hip_test_" + std::to_string(
         std::chrono::system_clock::now().time_since_epoch().count());
     std::filesystem::create_directories(test_dir);
 
-    CodeGen code_gen(trace, kernel_manager);
+    CodeGen code_gen(trace_file, kernel_manager);
     
     // Generate and compile the code
-    std::string generated_file = code_gen.generateFile(test_dir);
+    std::string generated_file = code_gen.generateFile(0, test_dir);
     EXPECT_TRUE(std::filesystem::exists(generated_file));
 
     std::cout << "\nGenerated code:\n" << std::ifstream(generated_file).rdbuf() << std::endl;
@@ -195,28 +123,106 @@ TEST(CodeGenTest, GenerateAndCompile) {
     // Cleanup
     std::filesystem::remove_all(test_dir);
 
-    std::string generated_code = code_gen.generateReproducer();
+    std::string generated_code = code_gen.generateReproducer(0);
     saveAndPrintCode("generate_and_compile", generated_code);
 }
 
 TEST(CodeGenTest, GenerateAndCompileInvalidKernel) {
-    std::string kernel_source = test_kernels::kernel_strings::invalid_kernel;
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    Tracer tracer(trace_file);
+    const auto& kernel_manager = tracer.getKernelManager();
 
-    KernelManager kernel_manager;
-    kernel_manager.addFromModuleSource(kernel_source);
-
-    Trace trace;
-    KernelExecution exec;
-    exec.kernel_name = "invalidKernel";
-    exec.grid_dim = dim3(1, 1, 1);
-    exec.block_dim = dim3(64, 1, 1);
-    exec.pre_state.push_back(MemoryState(64 * sizeof(float)));
-    
-    trace.kernel_executions.push_back(exec);
-
-    CodeGen code_gen(trace, kernel_manager);
-    std::string generated_code = code_gen.generateReproducer();
+    CodeGen code_gen(trace_file, kernel_manager);
+    std::string generated_code = code_gen.generateReproducer(0);
     saveAndPrintCode("invalid_kernel", generated_code);
 
-    EXPECT_FALSE(code_gen.generateAndCompile("/tmp"));
+    EXPECT_FALSE(code_gen.generateAndCompile(0, "/tmp"));
 }
+
+TEST(CodeGenTest, SingleOperationReproducer) {
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    Tracer tracer(trace_file);
+    const auto& kernel_manager = tracer.getKernelManager();
+    
+    CodeGen code_gen(trace_file, kernel_manager);
+    
+    // Generate code for just the first operation
+    std::string generated_code = code_gen.generateReproducer(0);
+    saveAndPrintCode("single_operation", generated_code);
+    
+    // Verify only one kernel launch is present
+    size_t first_launch = generated_code.find("<<<");
+    size_t second_launch = generated_code.find("<<<", first_launch + 1);
+    EXPECT_NE(first_launch, std::string::npos);
+    EXPECT_EQ(second_launch, std::string::npos);  // Should not find a second launch
+    
+    // Test invalid operation index
+    EXPECT_THROW(code_gen.generateReproducer(999), std::runtime_error);
+    EXPECT_THROW(code_gen.generateReproducer(-2), std::runtime_error);
+}
+
+TEST(CodeGenTest, KernelDeclarationsIncluded) {
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    Tracer tracer(trace_file);
+    const auto& kernel_manager = tracer.getKernelManager();
+    
+    CodeGen code_gen(trace_file, kernel_manager);
+    std::string generated_code = code_gen.generateReproducer(0);
+    saveAndPrintCode("kernel_declarations", generated_code);
+    
+    // Verify kernel declarations are present
+    const Kernel& kernel = kernel_manager.getKernelByName("vectorAdd");
+    std::string kernel_source = kernel.getSource();
+    EXPECT_TRUE(generated_code.find(kernel_source) != std::string::npos) 
+        << "Kernel source not found in generated code";
+    
+    // Verify kernel can be called with correct arguments
+    EXPECT_TRUE(generated_code.find("vectorAdd<<<grid, block, 0>>>(arg_0_vectorAdd_d, "
+                                  "arg_1_vectorAdd_d, arg_2_vectorAdd_d, arg_3_vectorAdd)") 
+                != std::string::npos)
+        << "Kernel call not found or incorrect in generated code";
+}
+
+/*
+
+TEST(CodeGenTest, KernelWithoutSource) {
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    Tracer tracer(trace_file);
+    const auto& kernel_manager = tracer.getKernelManager();
+    
+    // Create a mock kernel without source
+    Kernel mock_kernel("mockKernel");
+    mock_kernel.addArgument(KernelArgument("float*", "input"));
+    mock_kernel.addArgument(KernelArgument("float*", "output"));
+    mock_kernel.addArgument(KernelArgument("int", "size"));
+    
+    // Add the mock kernel to the trace
+    KernelExecution mock_exec;
+    mock_exec.kernel_name = "mockKernel";
+    mock_exec.grid_dim = {1, 1, 1};
+    mock_exec.block_dim = {256, 1, 1};
+    mock_exec.shared_mem = 0;
+    
+    Trace modified_trace = tracer.instance().trace_;
+    modified_trace.kernel_executions.push_back(mock_exec);
+    
+    // Create CodeGen with the modified trace
+    CodeGen code_gen(trace_file, kernel_manager);
+    code_gen.trace_ = modified_trace;  // Note: This requires making trace_ protected instead of private
+    
+    std::string generated_code = code_gen.generateReproducer(
+        modified_trace.kernel_executions.size() - 1);
+    saveAndPrintCode("kernel_without_source", generated_code);
+    
+    // Verify generated kernel declaration
+    std::string expected_declaration = 
+        "__global__ void mockKernel(float* input, float* output, int size) {\n"
+        "    // TODO: Original kernel source not available\n"
+        "    // This is a placeholder implementation\n"
+        "}\n";
+    
+    EXPECT_TRUE(generated_code.find(expected_declaration) != std::string::npos)
+        << "Generated code does not contain expected kernel declaration";
+}
+
+*/

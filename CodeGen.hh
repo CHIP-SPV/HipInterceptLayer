@@ -10,29 +10,39 @@
 #include <cstdlib>
 #include <chrono>
 #include <fstream>
+#include <iomanip>
 
 namespace hip_intercept {
 
 class CodeGen {
 public:
-    CodeGen(const Trace& trace, const KernelManager& kernel_manager)
-        : trace_(trace), kernel_manager_(kernel_manager) {}
+    CodeGen(const std::string& trace_file_path, const KernelManager& kernel_manager)
+        : trace_file_path_(trace_file_path), kernel_manager_(kernel_manager) {
+        // Load trace from file
+        Tracer tracer(trace_file_path);
+        trace_ = tracer.instance().trace_;
+    }
 
     // Generate complete reproducer code
-    std::string generateReproducer() {
+    std::string generateReproducer(int operation_index) {
+        if (operation_index < 0 || operation_index >= trace_.kernel_executions.size()) {
+            throw std::runtime_error("Operation index out of range: " + 
+                std::to_string(operation_index));
+        }
+
         std::stringstream ss;
         
         // Generate includes and main function header
         generateHeader(ss);
         
-        // Generate variable declarations
-        generateDeclarations(ss);
+        // Generate variable declarations for specific operation
+        generateDeclarations(ss, operation_index);
         
-        // Generate initialization code
-        generateInitialization(ss);
+        // Generate initialization code for specific operation
+        generateInitialization(ss, operation_index);
         
-        // Generate kernel launches
-        generateKernelLaunches(ss);
+        // Generate single kernel launch
+        generateKernelLaunches(ss, operation_index);
         
         // Generate cleanup code
         generateCleanup(ss);
@@ -41,7 +51,7 @@ public:
     }
 
     // Generate and write the code to a file
-    std::string generateFile(const std::string& output_dir = "/tmp") {
+    std::string generateFile(int operation_index, const std::string& output_dir = "/tmp") {
         std::filesystem::path dir_path(output_dir);
         std::filesystem::create_directories(dir_path);
         
@@ -57,7 +67,7 @@ public:
             throw std::runtime_error("Failed to create output file: " + filename);
         }
         
-        file << generateReproducer();
+        file << generateReproducer(operation_index);
         file.close();
         
         return filename;
@@ -87,9 +97,9 @@ public:
     }
 
     // Convenience method to generate and compile in one step
-    bool generateAndCompile(const std::string& output_dir = "/tmp") {
+    bool generateAndCompile(int operation_index, const std::string& output_dir = "/tmp") {
         try {
-            std::string filename = generateFile(output_dir);
+            std::string filename = generateFile(operation_index, output_dir);
             return compileFile(filename, output_dir);
         } catch (const std::exception& e) {
             std::cerr << "Error during generate and compile: " << e.what() << std::endl;
@@ -98,41 +108,69 @@ public:
     }
 
 private:
-    const Trace& trace_;
+    std::string trace_file_path_;
     const KernelManager& kernel_manager_;
+    Trace trace_;  // Now owned by CodeGen
     std::unordered_set<std::string> declared_vars_;
 
     void generateHeader(std::stringstream& ss) {
         ss << "#include <hip/hip_runtime.h>\n"
            << "#include <iostream>\n"
-           << "#include <cstring>\n\n";
+           << "#include <cstring>\n"
+           << "#include <fstream>\n\n";
         
-        // Add kernel declarations from KernelManager
+        // Add all unique kernel declarations
+        std::unordered_set<std::string> added_kernels;
         for (const auto& exec : trace_.kernel_executions) {
-            const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
-            ss << kernel.getSource() << "\n\n";
-        }
-        
-        // Add trace data declarations
-        for (const auto& exec : trace_.kernel_executions) {
-            for (size_t i = 0; i < exec.pre_state.size(); i++) {
-                ss << "const unsigned char trace_data_" << i << "[] = {";
-                const unsigned char* data = reinterpret_cast<const unsigned char*>(exec.pre_state[i].data.get());
-                for (size_t j = 0; j < exec.pre_state[i].size; j++) {
-                    if (j % 12 == 0) ss << "\n    ";
-                    ss << static_cast<unsigned int>(data[j]);
-                    if (j < exec.pre_state[i].size - 1) ss << ", ";
+            if (added_kernels.find(exec.kernel_name) == added_kernels.end()) {
+                const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
+                std::string source = kernel.getSource();
+                
+                if (!source.empty()) {
+                    ss << source << "\n\n";
+                } else {
+                    // Generate kernel declaration with empty body
+                    ss << "__global__ void " << kernel.getName() << "(";
+                    
+                    const auto& args = kernel.getArguments();
+                    for (size_t i = 0; i < args.size(); i++) {
+                        if (i > 0) ss << ", ";
+                        ss << args[i].getType();
+                        if (!args[i].getName().empty()) {
+                            ss << " " << args[i].getName();
+                        } else {
+                            ss << " arg" << i;
+                        }
+                    }
+                    
+                    ss << ") {\n"
+                       << "    // TODO: Original kernel source not available\n"
+                       << "    // This is a placeholder implementation\n"
+                       << "}\n\n";
                 }
-                ss << "\n};\n\n";
+                added_kernels.insert(exec.kernel_name);
             }
         }
         
+        // Add helper function to load trace data
+        ss << "bool loadTraceData(const char* filename, size_t offset, size_t size, void* dest) {\n"
+           << "    std::ifstream file(filename, std::ios::binary);\n"
+           << "    if (!file.is_open()) {\n"
+           << "        std::cerr << \"Failed to open trace file: \" << filename << std::endl;\n"
+           << "        return false;\n"
+           << "    }\n"
+           << "    file.seekg(offset);\n"
+           << "    file.read(static_cast<char*>(dest), size);\n"
+           << "    return file.good();\n"
+           << "}\n\n";
+        
         ss << "int main() {\n"
-           << "    hipError_t err;\n\n";
+           << "    hipError_t err;\n"
+           << "    const char* trace_file = \"" << trace_file_path_ << "\";\n\n";
     }
 
-    void generateDeclarations(std::stringstream& ss) {
-        for (const auto& exec : trace_.kernel_executions) {
+    void generateDeclarations(std::stringstream& ss, int operation_index) {
+        auto process_execution = [&](const KernelExecution& exec) {
             const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
             const auto& args = kernel.getArguments();
             
@@ -155,11 +193,15 @@ private:
                 }
             }
             ss << "\n";
-        }
+        };
+
+        process_execution(trace_.kernel_executions[operation_index]);
     }
 
-    void generateInitialization(std::stringstream& ss) {
-        for (const auto& exec : trace_.kernel_executions) {
+    void generateInitialization(std::stringstream& ss, int operation_index) {
+        size_t current_offset = 0;
+
+        auto process_execution = [&](const KernelExecution& exec) {
             const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
             const auto& args = kernel.getArguments();
             
@@ -173,23 +215,31 @@ private:
                     ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc(" << size << ");\n";
                     ss << "    err = hipMalloc((void**)&" << var_name << "_d, " << size << ");\n";
                     ss << "    if (err != hipSuccess) { std::cerr << \"Failed to allocate memory\\n\"; return 1; }\n";
-                    ss << "    memcpy(" << var_name << "_h, trace_data_" << i 
-                       << ", " << size << ");\n";
+                    
+                    // Load data from trace file
+                    ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << size 
+                       << ", " << var_name << "_h)) { return 1; }\n";
+                    
                     ss << "    err = hipMemcpy(" << var_name << "_d, " << var_name 
                        << "_h, " << size << ", hipMemcpyHostToDevice);\n";
                     ss << "    if (err != hipSuccess) { std::cerr << \"Failed to copy memory\\n\"; return 1; }\n\n";
+                    
+                    current_offset += size;
                 } else if (!arg.isPointer() && i < exec.pre_state.size()) {
-                    // For scalar arguments, copy from pre_state instead of arg_sizes
-                    ss << "    memcpy(&" << var_name << ", " 
-                       << "reinterpret_cast<const " << arg.getBaseType() << "*>(trace_data_" << i 
-                       << "), sizeof(" << arg.getBaseType() << "));\n";
+                    size_t size = sizeof(arg.getBaseType());
+                    ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " 
+                       << "sizeof(" << arg.getBaseType() << "), &" << var_name << ")) { return 1; }\n";
+                    
+                    current_offset += size;
                 }
             }
-        }
+        };
+
+        process_execution(trace_.kernel_executions[operation_index]);
     }
 
-    void generateKernelLaunches(std::stringstream& ss) {
-        for (const auto& exec : trace_.kernel_executions) {
+    void generateKernelLaunches(std::stringstream& ss, int operation_index) {
+        auto process_execution = [&](const KernelExecution& exec) {
             const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
             
             ss << "    // Launch kernel " << kernel.getName() << "\n";
@@ -208,7 +258,9 @@ private:
                 ss << (args[i].isPointer() ? var_name + "_d" : var_name);
             }
             ss << ");\n\n";
-        }
+        };
+
+        process_execution(trace_.kernel_executions[operation_index]);
     }
 
     void generateCleanup(std::stringstream& ss) {
