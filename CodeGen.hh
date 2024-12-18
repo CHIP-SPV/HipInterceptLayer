@@ -12,8 +12,6 @@
 #include <fstream>
 #include <iomanip>
 
-namespace hip_intercept {
-
 class CodeGen {
 public:
     CodeGen(const std::string& trace_file_path, const KernelManager& kernel_manager)
@@ -288,7 +286,5 @@ private:
            << "}\n";
     }
 };
-
-} // namespace hip_intercept
 
 #endif // HIP_INTERCEPT_LAYER_CODE_GEN_HH

@@ -7,8 +7,6 @@
 #include <cstdlib>
 #include <algorithm>
 
-namespace hip_intercept {
-
 namespace {
     const char* RED = "\033[1;31m";
     const char* YELLOW = "\033[1;33m";
@@ -661,17 +659,14 @@ int Comparator::getArgumentIndex(void* ptr, const std::vector<void*>& arg_ptrs) 
     return -1;
 }
 
-} // namespace hip_intercept
-
-
 int main(int argc, char* argv[]) {
     if (argc != 3) {
         std::cerr << "Usage: " << argv[0] << " <trace1> <trace2>\n";
         return 1;
     }
 
-    hip_intercept::Comparator comparator;
-    hip_intercept::ComparisonResult result = comparator.compare(argv[1], argv[2]);
+    Comparator comparator;
+    ComparisonResult result = comparator.compare(argv[1], argv[2]);
     comparator.printComparisonResult(result);
     return 0;
 }

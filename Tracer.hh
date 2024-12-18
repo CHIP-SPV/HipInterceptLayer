@@ -28,8 +28,6 @@
 #include <regex>
 #include <fstream>
 
-namespace hip_intercept {
-
 // Memory state tracking
 struct MemoryState {
     std::unique_ptr<char[]> data;
@@ -207,6 +205,5 @@ private:
     KernelManager kernel_manager_;
 };
 
-} // namespace hip_intercept
 #endif // HIP_INTERCEPT_LAYER_TRACER_HH
 

@@ -11,9 +11,6 @@
 struct dim3;
 struct hipDeviceProp_t;
 
-// Use hip_intercept namespace
-using namespace hip_intercept;
-
 // GPU allocation tracking
 class AllocationInfo {
 public:

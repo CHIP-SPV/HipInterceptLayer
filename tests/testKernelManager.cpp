@@ -4,8 +4,6 @@
 #include <fstream>
 #include <sstream>
 
-using namespace hip_intercept;
-
 class KernelManagerTest : public ::testing::Test {
 protected:
     KernelManager manager;

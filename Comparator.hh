@@ -6,8 +6,6 @@
 #include <unordered_map>
 #include <set>
 
-namespace hip_intercept {
-
 // Structure to represent a memory change
 struct MemoryChange {
     size_t element_index;
@@ -78,5 +76,3 @@ private:
     bool compareFloats(float a, float b) const;
     int getArgumentIndex(void* ptr, const std::vector<void*>& arg_ptrs) const;
 };
-
-} // namespace hip_intercept 

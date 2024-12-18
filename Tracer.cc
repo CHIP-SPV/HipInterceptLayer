@@ -1,7 +1,5 @@
 #include "Tracer.hh"
 
-namespace hip_intercept {
-
 // MemoryState implementation
 MemoryState::MemoryState(size_t s) : data(new char[s]), size(s) {}
 
@@ -516,5 +514,3 @@ MemoryOperation Tracer::readMemoryOperation(std::ifstream& file) {
     
     return op;
 }
-
-} // namespace hip_intercept

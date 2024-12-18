@@ -2,8 +2,6 @@
 
 #include <ostream>
 
-namespace hip_intercept {
-
 enum class MemoryOpType {
     COPY,
     COPY_ASYNC,
@@ -25,5 +23,3 @@ inline std::ostream& operator<<(std::ostream& os, const MemoryOpType& type) {
             return os << "UNKNOWN";
     }
 }
-
-} // namespace hip_intercept 

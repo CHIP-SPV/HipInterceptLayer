@@ -10,8 +10,6 @@
 #include <fstream>
 #include <unistd.h>
 
-using namespace hip_intercept;
-
 // Function pointer types
 typedef hipError_t (*hipMalloc_fn)(void**, size_t);
 typedef hipError_t (*hipMemcpy_fn)(void*, const void*, size_t, hipMemcpyKind);
@@ -202,8 +200,8 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes, h
     std::cout << "hipMemcpy(dst=" << dst << ", src=" << src 
               << ", size=" << sizeBytes << ", kind=" << memcpyKindToString(kind) << ")\n";
     
-    hip_intercept::MemoryOperation op;
-    op.type = hip_intercept::MemoryOpType::COPY;
+    MemoryOperation op;
+    op.type = MemoryOpType::COPY;
     op.dst = dst;
     op.src = src;
     op.size = sizeBytes;
@@ -212,8 +210,8 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes, h
     op.execution_order = op_count++;
     
     // Initialize pre_state and post_state
-    op.pre_state = std::make_shared<hip_intercept::MemoryState>(sizeBytes);
-    op.post_state = std::make_shared<hip_intercept::MemoryState>(sizeBytes);
+    op.pre_state = std::make_shared<MemoryState>(sizeBytes);
+    op.post_state = std::make_shared<MemoryState>(sizeBytes);
     
     // Capture pre-copy state if destination is GPU memory
     if (kind != hipMemcpyHostToHost) {
@@ -245,8 +243,8 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
     std::cout << "hipMemset(dst=" << dst << ", value=" << value 
               << ", size=" << sizeBytes << ")\n";
     
-    hip_intercept::MemoryOperation op;
-    op.type = hip_intercept::MemoryOpType::SET;
+    MemoryOperation op;
+    op.type = MemoryOpType::SET;
     op.dst = dst;
     op.size = sizeBytes;
     op.value = value;
@@ -254,8 +252,8 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
     op.execution_order = op_count++;
     
     // Initialize states
-    op.pre_state = std::make_shared<hip_intercept::MemoryState>(sizeBytes);
-    op.post_state = std::make_shared<hip_intercept::MemoryState>(sizeBytes);
+    op.pre_state = std::make_shared<MemoryState>(sizeBytes);
+    op.post_state = std::make_shared<MemoryState>(sizeBytes);
     
     // Capture pre-set state
     auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
@@ -288,7 +286,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     std::cout << "Kernel name: " << kernel.getName() << std::endl;
     
     // Create execution record
-    hip_intercept::KernelExecution exec;
+    KernelExecution exec;
     exec.function_address = (void*)function_address;
     exec.kernel_name = kernel.getName();
     exec.grid_dim = numBlocks;
@@ -559,8 +557,8 @@ hipError_t hipMalloc(void **ptr, size_t size) {
     std::cout << "hipMalloc(ptr=" << (void*)ptr << ", size=" << size << ")\n";
     
     // Create memory operation record
-    hip_intercept::MemoryOperation op;
-    op.type = hip_intercept::MemoryOpType::ALLOC;
+    MemoryOperation op;
+    op.type = MemoryOpType::ALLOC;
     op.dst = nullptr;  // Will be filled after allocation
     op.src = nullptr;
     op.size = size;
@@ -577,8 +575,8 @@ hipError_t hipMalloc(void **ptr, size_t size) {
         auto& info = Interceptor::instance().addAllocation(*ptr, size);
         
         // Create and capture initial state
-        op.pre_state = std::make_shared<hip_intercept::MemoryState>(size);
-        op.post_state = std::make_shared<hip_intercept::MemoryState>(size);
+        op.pre_state = std::make_shared<MemoryState>(size);
+        op.post_state = std::make_shared<MemoryState>(size);
         
         // Capture initial state of allocated memory
         createShadowCopy(*ptr, info);
@@ -651,7 +649,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     Kernel kernel = Tracer::instance().getKernelManager().getKernelByName(kernel_name);
 
     // Create execution record
-    hip_intercept::KernelExecution exec;
+    KernelExecution exec;
     exec.function_address = f;
     exec.kernel_name = kernel.getName();
     exec.grid_dim = {gridDimX, gridDimY, gridDimZ};
@@ -782,8 +780,8 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
               << ", size=" << sizeBytes << ", kind=" << memcpyKindToString(kind)
               << ", stream=" << stream << ")\n";
     
-    hip_intercept::MemoryOperation op;
-    op.type = hip_intercept::MemoryOpType::COPY_ASYNC;
+    MemoryOperation op;
+    op.type = MemoryOpType::COPY_ASYNC;
     op.dst = dst;
     op.src = src;
     op.size = sizeBytes;
@@ -796,7 +794,7 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
         auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(const_cast<void*>(src));
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
-            op.pre_state = std::make_shared<hip_intercept::MemoryState>(
+            op.pre_state = std::make_shared<MemoryState>(
                 info->shadow_copy.get(), info->size);
         }
     }
@@ -812,7 +810,7 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
         auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
-            op.post_state = std::make_shared<hip_intercept::MemoryState>(
+            op.post_state = std::make_shared<MemoryState>(
                 info->shadow_copy.get(), info->size);
         }
     }

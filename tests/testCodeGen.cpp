@@ -5,8 +5,6 @@
 #include "data/Kernels.hh"
 #include <fstream>
 
-using namespace hip_intercept;
-
 // Helper function to save and print generated code
 void saveAndPrintCode(const std::string& test_name, const std::string& generated_code) {
     std::string test_output = "/tmp/test_" + test_name + ".cpp";
