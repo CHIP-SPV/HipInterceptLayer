@@ -375,10 +375,10 @@ Tracer::Tracer(const std::string& path) {
             
             switch (event_header.type) {
                 case 1: // Kernel execution
-                    trace_.kernel_executions.push_back(readKernelExecution(file));
+                    instance().trace_.kernel_executions.push_back(readKernelExecution(file));
                     break;
                 case 2: // Memory operation
-                    trace_.memory_operations.push_back(readMemoryOperation(file));
+                    instance().trace_.memory_operations.push_back(readMemoryOperation(file));
                     break;
                 default:
                     std::cerr << "Unknown event type in trace file: " << event_header.type << std::endl;
@@ -387,8 +387,8 @@ Tracer::Tracer(const std::string& path) {
         }
 
         std::cout << "Trace loaded successfully with " 
-                  << trace_.kernel_executions.size() << " kernel executions and "
-                  << trace_.memory_operations.size() << " memory operations" << std::endl;
+                  << instance().trace_.kernel_executions.size() << " kernel executions and "
+                  << instance().trace_.memory_operations.size() << " memory operations" << std::endl;
 
 
     std::cout << "Tracer initialized with kernels: " << kernel_manager_.getNumKernels() << std::endl;
