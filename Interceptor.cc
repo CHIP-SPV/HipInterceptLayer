@@ -149,31 +149,48 @@ static int getArgumentIndex(void* ptr, const std::vector<void*>& arg_ptrs) {
     return -1;
 }
 
-static void recordMemoryChanges(hip_intercept::KernelExecution& exec) {
-    for (size_t i = 0; i < exec.pre_state.size(); i++) {
-        const auto& pre = exec.pre_state[i];
-        const auto& post = exec.post_state[i];
-        void* ptr = exec.arg_ptrs[i];
+static void recordMemoryChanges(KernelExecution& exec) {
+    const auto& kernel = Tracer::instance().getKernelManager().getKernelByName(exec.kernel_name);
+    const auto& args = kernel.getArguments();
+    
+    for (size_t i = 0; i < args.size(); i++) {
+        const auto& arg = args[i];
         
-        // For output arguments (arg2 in MatrixMul), record all values
-        int arg_idx = getArgumentIndex(ptr, exec.arg_ptrs);
-        if (arg_idx == 2) {  // Output matrix C
-            // Record all values for output arguments
-            for (size_t j = 0; j < pre.size; j += sizeof(float)) {
-                exec.changes.push_back({(char*)ptr + j, j});
-                float* pre_val = (float*)(pre.data.get() + j);
-                float* post_val = (float*)(post.data.get() + j);
-                exec.changes_by_arg[arg_idx].push_back({j/sizeof(float), {*pre_val, *post_val}});
-            }
-        } else {
-            // For input arguments, only record actual changes
-            for (size_t j = 0; j < pre.size; j += sizeof(float)) {
-                float* pre_val = (float*)(pre.data.get() + j);
-                float* post_val = (float*)(post.data.get() + j);
+        // Skip non-pointer arguments when checking for memory changes
+        if (!arg.isPointer()) {
+            continue;
+        }
+        
+        void* device_ptr = exec.arg_ptrs[i];
+        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+        
+        if (!base_ptr || !info) {
+            continue;
+        }
+        
+        // Create shadow copy for post-state
+        createShadowCopy(base_ptr, *info);
+        exec.post_state.emplace_back(info->shadow_copy.get(), info->size);
+        
+        // Compare pre and post states
+        if (i < exec.pre_state.size()) {
+            const auto& pre_state = exec.pre_state[i];
+            const auto& post_state = exec.post_state.back();
+            
+            // Only compare if both states are valid
+            if (pre_state.data && post_state.data && 
+                pre_state.size == post_state.size && 
+                pre_state.size % sizeof(float) == 0) {
                 
-                if (*pre_val != *post_val) {
-                    exec.changes.push_back({(char*)ptr + j, j});
-                    exec.changes_by_arg[arg_idx].push_back({j/sizeof(float), {*pre_val, *post_val}});
+                const float* pre_data = reinterpret_cast<const float*>(pre_state.data.get());
+                const float* post_data = reinterpret_cast<const float*>(post_state.data.get());
+                size_t num_elements = pre_state.size / sizeof(float);
+                
+                for (size_t j = 0; j < num_elements; j++) {
+                    if (pre_data[j] != post_data[j]) {
+                        exec.changes_by_arg[i].emplace_back(j, 
+                            std::make_pair(pre_data[j], post_data[j]));
+                    }
                 }
             }
         }
@@ -313,7 +330,11 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
                           << " ptr: " << device_ptr << std::endl;
             }
         } else {
+            // For scalar arguments, create a memory state with the value
             exec.arg_ptrs.push_back(param_value);
+            size_t arg_size = arg.getSize();
+            exec.pre_state.emplace_back(reinterpret_cast<const char*>(param_value), arg_size);
+            exec.arg_sizes.push_back(arg_size);
         }
     }
 
@@ -675,8 +696,11 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                           << " ptr: " << device_ptr << std::endl;
             }
         } else {
-            // For non-pointer types, store the parameter address directly
+            // For scalar arguments, create a memory state with the value
             exec.arg_ptrs.push_back(param_value);
+            size_t arg_size = arg.getSize();
+            exec.pre_state.emplace_back(reinterpret_cast<const char*>(param_value), arg_size);
+            exec.arg_sizes.push_back(arg_size);
         }
     }
 

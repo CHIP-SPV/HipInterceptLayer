@@ -178,10 +178,11 @@ private:
                     ss << "    err = hipMemcpy(" << var_name << "_d, " << var_name 
                        << "_h, " << size << ", hipMemcpyHostToDevice);\n";
                     ss << "    if (err != hipSuccess) { std::cerr << \"Failed to copy memory\\n\"; return 1; }\n\n";
-                } else if (!arg.isPointer() && i < exec.arg_sizes.size()) {
-                    // Handle scalar arguments
-                    ss << "    memcpy(&" << var_name << ", trace_data_" << i 
-                       << ", sizeof(" << arg.getBaseType() << "));\n";
+                } else if (!arg.isPointer() && i < exec.pre_state.size()) {
+                    // For scalar arguments, copy from pre_state instead of arg_sizes
+                    ss << "    memcpy(&" << var_name << ", " 
+                       << "reinterpret_cast<const " << arg.getBaseType() << "*>(trace_data_" << i 
+                       << "), sizeof(" << arg.getBaseType() << "));\n";
                 }
             }
         }

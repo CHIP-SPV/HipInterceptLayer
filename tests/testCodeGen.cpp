@@ -60,44 +60,35 @@ TEST(CodeGenTest, BasicCodeGeneration) {
 }
 
 TEST(CodeGenTest, KernelWithScalarArguments) {
-    std::string kernel_source = test_kernels::kernel_strings::scalar_kernel;
+    // Load the trace file
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    Tracer tracer(trace_file);
 
-    KernelManager kernel_manager;
-    kernel_manager.addFromModuleSource(kernel_source);
+    // Find the first scalarKernel execution
+    const auto& trace = tracer.instance().trace_;
+    const auto& kernel_manager = tracer.getKernelManager();
+    
+    auto it = std::find_if(trace.kernel_executions.begin(), trace.kernel_executions.end(),
+        [](const KernelExecution& exec) { return exec.kernel_name == "scalarKernel"; });
+    
+    ASSERT_NE(it, trace.kernel_executions.end()) << "scalarKernel execution not found in trace";
 
-    Trace trace;
-    KernelExecution exec;
-    exec.kernel_name = "scalarKernel";
-    exec.grid_dim = dim3(1, 1, 1);
-    exec.block_dim = dim3(128, 1, 1);
-    exec.shared_mem = 0;
-    
-    // Add memory states for all arguments
-    size_t array_size = 128 * sizeof(float);
-    exec.pre_state.push_back(MemoryState(array_size));  // out array
-    
-    // Add scalar argument values
-    int scalar1_value = 42;
-    float scalar2_value = 3.14f;
-    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(&scalar1_value), sizeof(int)));
-    exec.pre_state.push_back(MemoryState(reinterpret_cast<const char*>(&scalar2_value), sizeof(float)));
-    
-    // Add argument sizes
-    exec.arg_sizes.push_back(array_size);
-    exec.arg_sizes.push_back(sizeof(int));
-    exec.arg_sizes.push_back(sizeof(float));
-    
-    trace.kernel_executions.push_back(exec);
+    // Create a trace with just this execution
+    Trace single_exec_trace;
+    single_exec_trace.kernel_executions.push_back(*it);
 
-    CodeGen code_gen(trace, kernel_manager);
+    // Generate code
+    CodeGen code_gen(single_exec_trace, kernel_manager);
     std::string generated_code = code_gen.generateReproducer();
     saveAndPrintCode("scalar_arguments", generated_code);
 
     // Verify scalar parameter declarations and initialization
     EXPECT_TRUE(generated_code.find("int arg_1_scalarKernel;") != std::string::npos);
     EXPECT_TRUE(generated_code.find("float arg_2_scalarKernel;") != std::string::npos);
-    EXPECT_TRUE(generated_code.find("memcpy(&arg_1_scalarKernel, trace_data_1,") != std::string::npos);
-    EXPECT_TRUE(generated_code.find("memcpy(&arg_2_scalarKernel, trace_data_2,") != std::string::npos);
+    
+    // Update these expectations to match the new reinterpret_cast format
+    EXPECT_TRUE(generated_code.find("memcpy(&arg_1_scalarKernel, reinterpret_cast<const int*>(trace_data_1)") != std::string::npos);
+    EXPECT_TRUE(generated_code.find("memcpy(&arg_2_scalarKernel, reinterpret_cast<const float*>(trace_data_2)") != std::string::npos);
 }
 
 TEST(CodeGenTest, MultipleKernelLaunches) {
