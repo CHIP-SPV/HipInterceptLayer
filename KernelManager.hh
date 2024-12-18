@@ -44,12 +44,11 @@ public:
     bool is_pointer;
     bool is_vector;
     void operator<<(std::ostream& os) const {
-        os << "Argument: " << type << " " << name << " (size: " << size 
-        << " is_pointer: " << is_pointer << " is_vector: " << is_vector << ")\n";
+        os << "Argument: " << type << " " << name << " (size: " << size << " is_pointer: " << is_pointer << " is_vector: " << is_vector << ")\n";
     }
     Argument(std::string name, std::string type) {
         if (name.empty() || type.empty()) {
-            std::cerr << "Warning: Creating argument with empty name or type" << std::endl;
+            //std::cerr << "Warning: Creating argument with empty name or type" << std::endl;
         }
         this->name = name;
         this->type = type;
@@ -113,7 +112,7 @@ public:
     }
 
     void serialize(std::ofstream& file) const {
-        std::cout << "Serializing argument: " << name << " (" << type << ")" << std::endl;
+        //std::cout << "Serializing argument: " << name << " (" << type << ")" << std::endl;
         // Write the argument name
         uint32_t name_length = name.length();
         file.write(reinterpret_cast<const char*>(&name_length), sizeof(uint32_t));
@@ -435,11 +434,11 @@ public:
         uint32_t name_len = name.length();
         uint32_t signature_len = signature.length();
         
-        std::cout << "Writing kernel '" << name << "' with lengths:"
-                  << "\n  kernel_source: " << kernel_source_len
-                  << "\n  module_source: " << module_source_len
-                  << "\n  name: " << name_len
-                  << "\n  signature: " << signature_len << std::endl;
+        //std::cout << "Writing kernel '" << name << "' with lengths:"
+                  //<< "\n  kernel_source: " << kernel_source_len
+                  //<< "\n  module_source: " << module_source_len
+                  //<< "\n  name: " << name_len
+                  //<< "\n  signature: " << signature_len << std::endl;
         
         file.write(reinterpret_cast<const char*>(&kernel_source_len), sizeof(uint32_t));
         file.write(reinterpret_cast<const char*>(&module_source_len), sizeof(uint32_t));
@@ -456,7 +455,7 @@ public:
         uint32_t num_args = arguments.size();
         file.write(reinterpret_cast<const char*>(&num_args), sizeof(uint32_t));
         
-        std::cout << "Writing " << num_args << " arguments" << std::endl;
+        //std::cout << "Writing " << num_args << " arguments" << std::endl;
         for (const auto& arg : arguments) {
             arg.serialize(file);
         }
@@ -472,11 +471,11 @@ public:
         file.read(reinterpret_cast<char*>(&name_len), sizeof(uint32_t));
         file.read(reinterpret_cast<char*>(&signature_len), sizeof(uint32_t));
         
-        std::cout << "Reading kernel with lengths:"
-                  << "\n  kernel_source: " << kernel_source_len
-                  << "\n  module_source: " << module_source_len
-                  << "\n  name: " << name_len
-                  << "\n  signature: " << signature_len << std::endl;
+        //std::cout << "Reading kernel with lengths:"
+                  //<< "\n  kernel_source: " << kernel_source_len
+                  //<< "\n  module_source: " << module_source_len
+                  //<< "\n  name: " << name_len
+                  //<< "\n  signature: " << signature_len << std::endl;
                   
         // Sanity check lengths
         const uint32_t MAX_STRING_LENGTH = 1000000;  // 1MB limit
@@ -508,7 +507,7 @@ public:
             throw std::runtime_error("Invalid argument count in kernel deserialization");
         }
         
-        std::cout << "Reading " << num_args << " arguments" << std::endl;
+        //std::cout << "Reading " << num_args << " arguments" << std::endl;
         kernel.arguments.reserve(num_args);
         
         for (uint32_t i = 0; i < num_args; i++) {
@@ -679,8 +678,8 @@ public:
     ~KernelManager() {}
 
     void writeKernelManagerHeader(std::ofstream& file) {
-        std::cout << "Writing kernel manager header at position " << file.tellp();
-        std::cout << " - Magic: 0x" << std::hex << KRNL_MAGIC << ", Version: " << std::dec << KRNL_VERSION << std::endl;
+        //  std::cout << "Writing kernel manager header at position " << file.tellp();
+        //std::cout << " - Magic: 0x" << std::hex << KRNL_MAGIC << ", Version: " << std::dec << KRNL_VERSION << std::endl;
         uint32_t magic = KRNL_MAGIC;  // KRNL
         uint32_t version = KRNL_VERSION;
         file.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
@@ -692,8 +691,8 @@ public:
         uint32_t version;
         file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
         file.read(reinterpret_cast<char*>(&version), sizeof(version));
-        std::cout << "Reading kernel manager header at position " << file.tellg();
-        std::cout << " - Magic: 0x" << std::hex << magic << ", Version: " << std::dec << version << std::endl;
+        //std::cout << "Reading kernel manager header at position " << file.tellg();
+        //std::cout << " - Magic: 0x" << std::hex << magic << ", Version: " << std::dec << version << std::endl;
         if (magic != KRNL_MAGIC) {
             std::cerr << "Invalid kernel manager format in trace (magic: 0x" 
                       << std::hex << magic << ", expected: 0x" << KRNL_MAGIC << ")" << std::endl;
@@ -925,14 +924,14 @@ public:
     // Add direct serialization methods for use in trace file
     void serialize(std::ofstream& file) const {
         uint32_t num_kernels = kernels.size();
-        std::cout << "Serializing " << num_kernels << " kernels" << std::endl;
+        //std::cout << "Serializing " << num_kernels << " kernels" << std::endl;
         
         // Write kernel count
         file.write(reinterpret_cast<const char*>(&num_kernels), sizeof(uint32_t));
         
         // Write each kernel
         for (const auto& kernel : kernels) {
-            std::cout << "Serializing kernel: " << kernel.getName() << std::endl;
+            //std::cout << "Serializing kernel: " << kernel.getName() << std::endl;
             kernel.serialize(file);
             file.flush();  // Ensure data is written
         }
@@ -942,8 +941,8 @@ public:
         uint32_t num_kernels;
         file.read(reinterpret_cast<char*>(&num_kernels), sizeof(uint32_t));
         
-        std::cout << "File position before reading kernel count: " << file.tellg() - std::streamoff(sizeof(uint32_t)) << std::endl;
-        std::cout << "Kernel count value read: " << num_kernels << std::endl;
+        //std::cout << "File position before reading kernel count: " << file.tellg() - std::streamoff(sizeof(uint32_t)) << std::endl;
+        //std::cout << "Kernel count value read: " << num_kernels << std::endl;
         
         // Sanity check on kernel count
         if (num_kernels > 1000) {  // Arbitrary reasonable limit
@@ -951,24 +950,24 @@ public:
             throw std::runtime_error("Invalid kernel count in deserialization");
         }
         
-        std::cout << "Starting to deserialize " << num_kernels << " kernels" << std::endl;
+        //std::cout << "Starting to deserialize " << num_kernels << " kernels" << std::endl;
         
         kernels.clear();  // Clear any existing kernels
         kernels.reserve(num_kernels);  // Reserve space for efficiency
 
         for (uint32_t i = 0; i < num_kernels; i++) {
-            std::cout << "\nDeserializing kernel " << i + 1 << " of " << num_kernels 
-                      << " at position " << file.tellg() << std::endl;
+            //std::cout << "\nDeserializing kernel " << i + 1 << " of " << num_kernels 
+                      //<< " at position " << file.tellg() << std::endl;
             try {
                 kernels.push_back(Kernel::deserialize(file));
-                std::cout << "Successfully deserialized kernel " << i + 1 << std::endl;
+                //std::cout << "Successfully deserialized kernel " << i + 1 << std::endl;
             } catch (const std::exception& e) {
                 std::cerr << "Error deserializing kernel " << i + 1 << ": " << e.what() << std::endl;
                 throw;
             }
         }
         
-        std::cout << "Successfully deserialized all " << kernels.size() << " kernels" << std::endl;
+        //std::cout << "Successfully deserialized all " << kernels.size() << " kernels" << std::endl;
     }
 
     size_t getNumKernels() const { return kernels.size(); }

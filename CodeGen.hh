@@ -17,10 +17,24 @@ namespace hip_intercept {
 class CodeGen {
 public:
     CodeGen(const std::string& trace_file_path, const KernelManager& kernel_manager)
-        : trace_file_path_(trace_file_path), kernel_manager_(kernel_manager) {
+        : trace_file_path_(trace_file_path), kernel_manager_(kernel_manager), operation_index_(-1) {
         // Load trace from file
         Tracer tracer(trace_file_path);
         trace_ = tracer.instance().trace_;
+    }
+
+    std::string generateReproducer(std::string kernel_name, int instance_index) {
+        // Find all operations for the given kernel name and instance index
+        std::vector<int> operation_indices;
+        for (size_t i = 0; i < trace_.kernel_executions.size(); i++) {
+            if (trace_.kernel_executions[i].kernel_name == kernel_name) {
+                operation_indices.push_back(i);
+            }
+        }
+        if (operation_indices.empty()) {
+            throw std::runtime_error("Kernel not found in trace");
+        }
+        return generateReproducer(operation_indices[instance_index]);
     }
 
     // Generate complete reproducer code
@@ -30,6 +44,7 @@ public:
                 std::to_string(operation_index));
         }
 
+        operation_index_ = operation_index;
         std::stringstream ss;
         
         // Generate includes and main function header
@@ -112,6 +127,7 @@ private:
     const KernelManager& kernel_manager_;
     Trace trace_;  // Now owned by CodeGen
     std::unordered_set<std::string> declared_vars_;
+    int operation_index_;
 
     void generateHeader(std::stringstream& ss) {
         ss << "#include <hip/hip_runtime.h>\n"
@@ -119,37 +135,32 @@ private:
            << "#include <cstring>\n"
            << "#include <fstream>\n\n";
         
-        // Add all unique kernel declarations
-        std::unordered_set<std::string> added_kernels;
-        for (const auto& exec : trace_.kernel_executions) {
-            if (added_kernels.find(exec.kernel_name) == added_kernels.end()) {
-                const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
-                std::string source = kernel.getSource();
-                
-                if (!source.empty()) {
-                    ss << source << "\n\n";
+        // Add kernel declaration only for the current operation
+        const KernelExecution& exec = trace_.kernel_executions[operation_index_];
+        const Kernel& kernel = kernel_manager_.getKernelByName(exec.kernel_name);
+        std::string source = kernel.getSource();
+        
+        if (!source.empty()) {
+            ss << source << "\n\n";
+        } else {
+            // Generate kernel declaration with empty body
+            ss << "__global__ void " << kernel.getName() << "(";
+            
+            const auto& args = kernel.getArguments();
+            for (size_t i = 0; i < args.size(); i++) {
+                if (i > 0) ss << ", ";
+                ss << args[i].getType();
+                if (!args[i].getName().empty()) {
+                    ss << " " << args[i].getName();
                 } else {
-                    // Generate kernel declaration with empty body
-                    ss << "__global__ void " << kernel.getName() << "(";
-                    
-                    const auto& args = kernel.getArguments();
-                    for (size_t i = 0; i < args.size(); i++) {
-                        if (i > 0) ss << ", ";
-                        ss << args[i].getType();
-                        if (!args[i].getName().empty()) {
-                            ss << " " << args[i].getName();
-                        } else {
-                            ss << " arg" << i;
-                        }
-                    }
-                    
-                    ss << ") {\n"
-                       << "    // TODO: Original kernel source not available\n"
-                       << "    // This is a placeholder implementation\n"
-                       << "}\n\n";
+                    ss << " arg" << i;
                 }
-                added_kernels.insert(exec.kernel_name);
             }
+            
+            ss << ") {\n"
+               << "    // TODO: Original kernel source not available\n"
+               << "    // This is a placeholder implementation\n"
+               << "}\n\n";
         }
         
         // Add helper function to load trace data
