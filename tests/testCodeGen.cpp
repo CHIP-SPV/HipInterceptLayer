@@ -19,33 +19,26 @@ void saveAndPrintCode(const std::string& test_name, const std::string& generated
 }
 
 TEST(CodeGenTest, BasicCodeGeneration) {
-    // Create a simple kernel
-    std::string kernel_source = test_kernels::kernel_strings::vector_add;
-
-    // Setup KernelManager
-    KernelManager kernel_manager;
-    kernel_manager.addFromModuleSource(kernel_source);
-
-    // Create a mock trace
-    Trace trace;
-    KernelExecution exec;
-    exec.kernel_name = "vectorAdd";
-    exec.grid_dim = dim3(1, 1, 1);
-    exec.block_dim = dim3(256, 1, 1);
-    exec.shared_mem = 0;
+    // Load the trace file generated during build
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    Tracer tracer(trace_file);
     
-    // Add mock memory states
-    size_t array_size = 1024 * sizeof(float);
-    exec.pre_state.push_back(MemoryState(array_size));  // a
-    exec.pre_state.push_back(MemoryState(array_size));  // b
-    exec.pre_state.push_back(MemoryState(array_size));  // c
+    // Get the first vectorAdd kernel execution from the trace
+    const auto& trace = tracer.instance().trace_;
+    const auto& kernel_manager = tracer.getKernelManager();
+    std::cout << trace;
     
-    trace.kernel_executions.push_back(exec);
-
-    // Generate code
+    // Find the first vectorAdd execution
+    auto it = std::find_if(trace.kernel_executions.begin(), trace.kernel_executions.end(),
+        [](const KernelExecution& exec) { 
+            std::cout << "Kernel name: " << exec.kernel_name << std::endl;
+            return exec.kernel_name == "vectorAdd"; 
+        });
+    
+    ASSERT_NE(it, trace.kernel_executions.end()) << "vectorAdd kernel execution not found in trace";
+    
+    // Generate code using the traced execution
     CodeGen code_gen(trace, kernel_manager);
-    
-    // Save to file and print for debugging
     std::string generated_code = code_gen.generateReproducer();
     saveAndPrintCode("basic_codegen", generated_code);
     
