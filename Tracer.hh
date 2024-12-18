@@ -116,6 +116,37 @@ struct Trace {
     uint64_t timestamp;
 };
 
+
+inline std::ostream& operator<<(std::ostream& os, const KernelExecution& exec) {
+    os << "KernelExecution: " << exec.kernel_name 
+       << " (grid: " << exec.grid_dim.x << "," << exec.grid_dim.y << "," << exec.grid_dim.z
+       << ") (block: " << exec.block_dim.x << "," << exec.block_dim.y << "," << exec.block_dim.z
+       << ") pre_state: " << exec.pre_state.size()
+       << " post_state: " << exec.post_state.size();
+    return os;
+}
+
+inline std::ostream& operator<<(std::ostream& os, const MemoryOperation& state) {
+    os << "MemoryOperation: " << state.type << " dst: " << state.dst
+       << " src: " << state.src << " size: " << state.size
+       << " value: " << state.value << " kind: " << state.kind
+       << " execution_order: " << state.execution_order
+       << " stream: " << state.stream;
+    return os;
+}
+
+inline std::ostream& operator<<(std::ostream& os, const Trace& trace) {
+    os << "Trace: " << trace.kernel_executions.size() << " kernel executions" << std::endl;
+    os << "Memory operations: " << trace.memory_operations.size() << std::endl;
+    for (const auto& exec : trace.kernel_executions) {
+        os << exec << std::endl;
+    }
+    for (const auto& op : trace.memory_operations) {
+        os << op << std::endl;
+    }
+    return os;
+}
+
 class Tracer {
 public:
     KernelManager& getKernelManager() { return kernel_manager_; }
@@ -139,6 +170,20 @@ public:
     ~Tracer() { std::cout << "Tracer destructor called" << std::endl; finalizeTrace(); }
     
     void finalizeTrace();
+
+    friend std::ostream& operator<<(std::ostream& os, const Tracer& tracer) {
+        os << "Tracer: " << std::endl;
+        os << "Trace: " << tracer.trace_.kernel_executions.size() << " kernel executions" << std::endl;
+        os << "Memory operations: " << tracer.trace_.memory_operations.size() << std::endl;
+        for (const auto& exec : tracer.trace_.kernel_executions) {
+            os << exec << std::endl;
+        }
+        for (const auto& op : tracer.trace_.memory_operations) {
+            os << op << std::endl;
+        }
+        return os;
+    }
+
 private:
     Tracer(); // Used for recording the trace
 

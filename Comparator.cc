@@ -374,16 +374,14 @@ ComparisonResult Comparator::compare(const Trace& trace1, const Trace& trace2) {
                 std::stringstream err;
                 err << "Memory operation differs at order " << event1.execution_order << ":\n";
                 if (op1.type != op2.type) {
-                    err << "  - Type mismatch: " << memOpTypeToString(op1.type) 
-                        << " vs " << memOpTypeToString(op2.type) << "\n";
+                    err << "  - Type mismatch: " << op1.type << " vs " << op2.type << "\n";
                 }
                 if (op1.size != op2.size) {
                     err << "  - Size mismatch: " << op1.size << " vs " << op2.size 
                         << " bytes\n";
                 }
                 if (op1.type != MemoryOpType::ALLOC && op1.kind != op2.kind) {
-                    err << "  - Kind mismatch: " << memcpyKindToString(op1.kind) 
-                        << " vs " << memcpyKindToString(op2.kind) << "\n";
+                    err << "  - Kind mismatch: " << op1.kind << " vs " << op2.kind << "\n";
                 }
                 result.error_message += err.str();
             }

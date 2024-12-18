@@ -43,6 +43,10 @@ public:
     size_t size;
     bool is_pointer;
     bool is_vector;
+    void operator<<(std::ostream& os) const {
+        os << "Argument: " << type << " " << name << " (size: " << size 
+        << " is_pointer: " << is_pointer << " is_vector: " << is_vector << ")\n";
+    }
     Argument(std::string name, std::string type) {
         if (name.empty() || type.empty()) {
             std::cerr << "Warning: Creating argument with empty name or type" << std::endl;
@@ -236,6 +240,15 @@ class Kernel {
         //std::cout << "Kernel source:\n" << kernelSource << std::endl;
     }
 public:
+
+    void operator<<(std::ostream& os) const {
+        os << "Kernel: " << name << " (" << signature << ")" << std::endl;
+        os << "    Host address: " << host_address << std::endl;
+        os << "    Device address: " << device_address << std::endl;
+        for (const auto& arg : arguments) {
+            arg << os;
+        }
+    }
     void* getHostAddress() const {
         return host_address;
     }
@@ -655,6 +668,13 @@ class KernelManager {
     }
 
 public:
+    void operator<<(std::ostream& os) const {
+        os << "KernelManager: " << kernels.size() << " kernels" << std::endl;
+        for (const auto& kernel : kernels) {
+            kernel << os;
+        }
+    }
+
     KernelManager() {}
     ~KernelManager() {}
 

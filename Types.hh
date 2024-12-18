@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ostream>
+
 namespace hip_intercept {
 
 enum class MemoryOpType {
@@ -9,13 +11,18 @@ enum class MemoryOpType {
     ALLOC
 };
 
-inline static const char* memOpTypeToString(MemoryOpType type) {
+inline std::ostream& operator<<(std::ostream& os, const MemoryOpType& type) {
     switch (type) {
-        case MemoryOpType::COPY: return "COPY";
-        case MemoryOpType::COPY_ASYNC: return "COPY_ASYNC";
-        case MemoryOpType::SET: return "SET";
-        case MemoryOpType::ALLOC: return "ALLOC";
-        default: return "UNKNOWN";
+        case MemoryOpType::COPY:
+            return os << "COPY";
+        case MemoryOpType::COPY_ASYNC:
+            return os << "COPY_ASYNC";
+        case MemoryOpType::SET:
+            return os << "SET";
+        case MemoryOpType::ALLOC:
+            return os << "ALLOC";
+        default:
+            return os << "UNKNOWN";
     }
 }
 

@@ -90,7 +90,8 @@ void Tracer::finalizeTrace() {
     // Replace original with final
     std::filesystem::rename(final_trace_path, trace_path_);
     
-    std::cout << "Trace finalized successfully" << std::endl;
+    std::cout << "\n\nTnrace finalized successfully" << std::endl;
+    kernel_manager_ << std::cout;
     initialized_ = false;
 }
 
