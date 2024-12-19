@@ -438,7 +438,21 @@ public:
     const KernelManager& getKernelManager() const { return kernel_manager_; }
 
     Trace trace_;
-
+    size_t getNumOperations() const { return trace_.operations.size(); }
+    std::shared_ptr<Operation> getOperation(size_t index) const { 
+        assert(index < trace_.operations.size());
+        return trace_.operations[index]; 
+    }
+    std::vector<size_t> getOperationsIdxByName(const std::string& name) const {
+        std::vector<size_t> indices;
+        for (size_t i = 0; i < trace_.operations.size(); ++i) {
+            auto kernel_exec = dynamic_cast<const KernelExecution*>(trace_.operations[i].get());
+            if (kernel_exec && kernel_exec->kernel_name == name) {
+                indices.push_back(i);
+            }
+        }
+        return indices;
+    }
     static Tracer& instance();
     
     void recordKernelLaunch(const KernelExecution& exec);

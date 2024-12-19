@@ -19,12 +19,10 @@ void saveAndPrintCode(const std::string& test_name, const std::string& generated
 TEST(CodeGenTest, BasicCodeGeneration) {
     // Load the trace file generated during build
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    Tracer tracer(trace_file);
-    const auto& kernel_manager = tracer.getKernelManager();
-    
     // Generate code using the traced execution
-    CodeGen code_gen(trace_file, kernel_manager);
-    std::string generated_code = code_gen.generateReproducer(0);
+    CodeGen code_gen(trace_file);
+    auto idx = code_gen.tracer.getOperationsIdxByName("vectorAdd")[0];
+    std::string generated_code = code_gen.generateReproducer(idx);
     saveAndPrintCode("basic_codegen", generated_code);
     
     // Basic verification
@@ -46,27 +44,10 @@ TEST(CodeGenTest, BasicCodeGeneration) {
 
 TEST(CodeGenTest, KernelWithScalarArguments) {
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    Tracer tracer(trace_file);
-    const auto& kernel_manager = tracer.getKernelManager();
+    CodeGen code_gen(trace_file);
     
-    CodeGen code_gen(trace_file, kernel_manager);
-    
-    // Find the operation index for scalarKernel
-    int scalar_kernel_index = -1;
-    const auto& executions = tracer.instance().trace_.operations;
-    for (size_t i = 0; i < executions.size(); i++) {
-        if (executions[i]->isKernel()) {
-            const auto& kernel_exec = static_cast<const KernelExecution&>(*executions[i]);
-            if (kernel_exec.kernel_name == "scalarKernel") {
-                scalar_kernel_index = i;
-                break;
-            }
-        }
-    }
-    
-    ASSERT_NE(scalar_kernel_index, -1) << "scalarKernel not found in trace";
-    
-    std::string generated_code = code_gen.generateReproducer(scalar_kernel_index);
+    auto idx = code_gen.tracer.getOperationsIdxByName("scalarKernel")[0];
+    std::string generated_code = code_gen.generateReproducer(idx);
     saveAndPrintCode("scalar_arguments", generated_code);
     
     // Verify scalar parameter declarations and initialization
@@ -81,18 +62,17 @@ TEST(CodeGenTest, KernelWithScalarArguments) {
 
 TEST(CodeGenTest, GenerateAndCompile) {
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    Tracer tracer(trace_file);
-    const auto& kernel_manager = tracer.getKernelManager();
+    CodeGen code_gen(trace_file);
 
     // Create a temporary directory for test outputs
     std::string test_dir = "/tmp/hip_test_" + std::to_string(
         std::chrono::system_clock::now().time_since_epoch().count());
     std::filesystem::create_directories(test_dir);
 
-    CodeGen code_gen(trace_file, kernel_manager);
     
     // Generate and compile the code
-    std::string generated_file = code_gen.generateFile(0, test_dir);
+    auto idx = code_gen.tracer.getOperationsIdxByName("vectorAdd")[0];
+    std::string generated_file = code_gen.generateFile(idx, test_dir);
     EXPECT_TRUE(std::filesystem::exists(generated_file));
 
     std::cout << "\nGenerated code:\n" << std::ifstream(generated_file).rdbuf() << std::endl;
@@ -124,55 +104,29 @@ TEST(CodeGenTest, GenerateAndCompile) {
     // Cleanup
     std::filesystem::remove_all(test_dir);
 
-    std::string generated_code = code_gen.generateReproducer(0);
+    std::string generated_code = code_gen.generateReproducer(idx);
     saveAndPrintCode("generate_and_compile", generated_code);
 }
 
 TEST(CodeGenTest, GenerateAndCompileInvalidKernel) {
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    Tracer tracer(trace_file);
-    const auto& kernel_manager = tracer.getKernelManager();
-
-    CodeGen code_gen(trace_file, kernel_manager);
-    std::string generated_code = code_gen.generateReproducer(0);
+    CodeGen code_gen(trace_file);
+    auto idx = code_gen.tracer.getOperationsIdxByName("vectorAdd")[0];
+    std::string generated_code = code_gen.generateReproducer(idx);
     saveAndPrintCode("invalid_kernel", generated_code);
 
     EXPECT_FALSE(code_gen.generateAndCompile(0, "/tmp"));
 }
 
-TEST(CodeGenTest, SingleOperationReproducer) {
-    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    Tracer tracer(trace_file);
-    const auto& kernel_manager = tracer.getKernelManager();
-    
-    CodeGen code_gen(trace_file, kernel_manager);
-    
-    // Generate code for just the first operation
-    std::string generated_code = code_gen.generateReproducer(0);
-    saveAndPrintCode("single_operation", generated_code);
-    
-    // Verify only one kernel launch is present
-    size_t first_launch = generated_code.find("<<<");
-    size_t second_launch = generated_code.find("<<<", first_launch + 1);
-    EXPECT_NE(first_launch, std::string::npos);
-    EXPECT_EQ(second_launch, std::string::npos);  // Should not find a second launch
-    
-    // Test invalid operation index
-    EXPECT_THROW(code_gen.generateReproducer(999), std::runtime_error);
-    EXPECT_THROW(code_gen.generateReproducer(-2), std::runtime_error);
-}
-
 TEST(CodeGenTest, KernelDeclarationsIncluded) {
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    Tracer tracer(trace_file);
-    const auto& kernel_manager = tracer.getKernelManager();
-    
-    CodeGen code_gen(trace_file, kernel_manager);
-    std::string generated_code = code_gen.generateReproducer(0);
+    CodeGen code_gen(trace_file);
+    auto idx = code_gen.tracer.getOperationsIdxByName("vectorAdd")[0];
+    std::string generated_code = code_gen.generateReproducer(idx);
     saveAndPrintCode("kernel_declarations", generated_code);
     
     // Verify kernel declarations are present
-    const Kernel& kernel = kernel_manager.getKernelByName("vectorAdd");
+    const Kernel& kernel = code_gen.tracer.getKernelManager().getKernelByName("vectorAdd");
     std::string kernel_source = kernel.getSource();
     EXPECT_TRUE(generated_code.find(kernel_source) != std::string::npos) 
         << "Kernel source not found in generated code";

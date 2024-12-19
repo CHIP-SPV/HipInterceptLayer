@@ -166,6 +166,8 @@ Tracer::Tracer(const std::string& path) {
         auto op = Operation::deserialize(file);
         trace_.addOperation(std::move(op));
     }
+
+    std::cout << "Trace loaded from file: " << path << " with " << trace_.operations.size() << " operations" << std::endl;
 }
 
 std::shared_ptr<Operation> Operation::deserialize(std::ifstream& file) {
