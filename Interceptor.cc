@@ -147,54 +147,6 @@ static int getArgumentIndex(void* ptr, const std::vector<void*>& arg_ptrs) {
     return -1;
 }
 
-static void recordMemoryChanges(KernelExecution& exec) {
-    const auto& kernel = Tracer::instance().getKernelManager().getKernelByName(exec.kernel_name);
-    const auto& args = kernel.getArguments();
-    
-    for (size_t i = 0; i < args.size(); i++) {
-        const auto& arg = args[i];
-        
-        // Skip non-pointer arguments when checking for memory changes
-        if (!arg.isPointer()) {
-            continue;
-        }
-        
-        void* device_ptr = exec.arg_ptrs[i];
-        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
-        
-        if (!base_ptr || !info) {
-            continue;
-        }
-        
-        // Create shadow copy for post-state
-        createShadowCopy(base_ptr, *info);
-        exec.post_state.emplace_back(info->shadow_copy.get(), info->size);
-        
-        // Compare pre and post states
-        if (i < exec.pre_state.size()) {
-            const auto& pre_state = exec.pre_state[i];
-            const auto& post_state = exec.post_state.back();
-            
-            // Only compare if both states are valid
-            if (pre_state.data && post_state.data && 
-                pre_state.size == post_state.size && 
-                pre_state.size % sizeof(float) == 0) {
-                
-                const float* pre_data = reinterpret_cast<const float*>(pre_state.data.get());
-                const float* post_data = reinterpret_cast<const float*>(post_state.data.get());
-                size_t num_elements = pre_state.size / sizeof(float);
-                
-                for (size_t j = 0; j < num_elements; j++) {
-                    if (pre_data[j] != post_data[j]) {
-                        exec.changes_by_arg[i].emplace_back(j, 
-                            std::make_pair(pre_data[j], post_data[j]));
-                    }
-                }
-            }
-        }
-    }
-}
-
 static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes, hipMemcpyKind kind) {
     std::cout << "\n=== INTERCEPTED hipMemcpy ===\n";
     std::cout << "hipMemcpy(dst=" << dst << ", src=" << src 
@@ -322,7 +274,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
                           << "\n  Size: " << info->size << std::endl;
                           
                 createShadowCopy(base_ptr, *info);
-                exec.pre_state.emplace_back(info->shadow_copy.get(), info->size);
+                exec.pre_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
             } else {
                 std::cerr << "WARNING: Could not find allocation for arg " << i
                           << " ptr: " << device_ptr << std::endl;
@@ -331,14 +283,10 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
             // For scalar arguments, create a memory state with the value
             exec.arg_ptrs.push_back(param_value);
             size_t arg_size = arg.getSize();
-            exec.pre_state.emplace_back(reinterpret_cast<const char*>(param_value), arg_size);
+            exec.pre_state = std::make_shared<MemoryState>(reinterpret_cast<const char*>(param_value), arg_size);
             exec.arg_sizes.push_back(arg_size);
         }
     }
-
-    std::cout << "DEBUG: Pre-launch state:"
-              << "\n  Pre-states: " << exec.pre_state.size()
-              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
 
     // Launch kernel
     hipError_t result = get_real_hipLaunchKernel()(function_address, numBlocks, 
@@ -357,18 +305,12 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
                       << "\n  Size: " << info->size << std::endl;
                       
             createShadowCopy(base_ptr, *info);
-            exec.post_state.emplace_back(info->shadow_copy.get(), info->size);
+            exec.post_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
         } else {
             std::cerr << "WARNING: Could not find allocation for post-state arg " << i
                       << " ptr: " << device_ptr << std::endl;
         }
     }
-
-    std::cout << "DEBUG: Post-launch state:"
-              << "\n  Post-states: " << exec.post_state.size()
-              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
-
-    recordMemoryChanges(exec);
     
     // Record kernel execution using Tracer
     Tracer::instance().recordKernelLaunch(exec);
@@ -688,7 +630,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                           << "\n  Size: " << info->size << std::endl;
                           
                 createShadowCopy(base_ptr, *info);
-                exec.pre_state.emplace_back(info->shadow_copy.get(), info->size);
+                exec.pre_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
             } else {
                 std::cerr << "WARNING: Could not find allocation for arg " << i
                           << " ptr: " << device_ptr << std::endl;
@@ -697,14 +639,10 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
             // For scalar arguments, create a memory state with the value
             exec.arg_ptrs.push_back(param_value);
             size_t arg_size = arg.getSize();
-            exec.pre_state.emplace_back(reinterpret_cast<const char*>(param_value), arg_size);
+            exec.pre_state = std::make_shared<MemoryState>(reinterpret_cast<const char*>(param_value), arg_size);
             exec.arg_sizes.push_back(arg_size);
         }
     }
-
-    std::cout << "DEBUG: Pre-launch state:"
-              << "\n  Pre-states: " << exec.pre_state.size()
-              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
 
     // Launch kernel
     hipError_t result = get_real_hipModuleLaunchKernel()(f, gridDimX, gridDimY, gridDimZ,
@@ -727,7 +665,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                           << "\n  Size: " << info->size << std::endl;
                           
                 createShadowCopy(base_ptr, *info);
-                exec.post_state.emplace_back(info->shadow_copy.get(), info->size);
+                exec.post_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
             } else {
                 std::cerr << "WARNING: Could not find allocation for post-state arg " << i
                           << " ptr: " << device_ptr << std::endl;
@@ -735,13 +673,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
         }
     }
 
-    std::cout << "DEBUG: Post-launch state:"
-              << "\n  Post-states: " << exec.post_state.size()
-              << "\n  Args: " << exec.arg_ptrs.size() << std::endl;
-
-    recordMemoryChanges(exec);
     Tracer::instance().recordKernelLaunch(exec);
-    
     return result;
 }
 

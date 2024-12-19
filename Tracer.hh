@@ -180,10 +180,8 @@ class KernelExecution : public Operation {
           shared_mem(shared_mem),
           stream(stream) {}
     
-    std::vector<std::pair<void*, size_t>> changes;
     std::vector<void*> arg_ptrs;
     std::vector<size_t> arg_sizes;
-    std::map<int, std::vector<std::pair<size_t, std::pair<float, float>>>> changes_by_arg;
 
     // Replace operator<< with writeToStream
     void writeToStream(std::ostream& os) const override {
