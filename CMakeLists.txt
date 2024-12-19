@@ -5,7 +5,7 @@ project(HIPInterceptLayer VERSION 1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_CXX_COMPILER hipcc)
+message(STATUS "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
 
 add_compile_options(-g)
 
@@ -23,6 +23,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 # Build libraries and executable
 add_library(HIPIntercept SHARED Interceptor.cc Tracer.cc)
 add_executable(HIPInterceptCompare Comparator.cc Tracer.cc)
+target_link_libraries(HIPIntercept INTERFACE hip::host)
+target_link_libraries(HIPInterceptCompare INTERFACE hip::host)
 enable_testing()
 add_subdirectory(tests)
 add_dependencies(unit_tests HIPIntercept HIPInterceptCompare)

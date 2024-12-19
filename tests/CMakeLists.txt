@@ -5,6 +5,11 @@ add_executable(unit_tests
   testCodeGen.cpp
 )
 
+target_link_libraries(unit_tests
+  PRIVATE
+  hip::device
+)
+
 # Add compile definition for build directory path
 target_compile_definitions(unit_tests PRIVATE
   CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"

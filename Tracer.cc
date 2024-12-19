@@ -49,7 +49,12 @@ void Tracer::finalizeTrace() {
     
     // Write kernel manager data
     kernel_manager_.serialize(final_trace);
-    
+
+    // Write number of operations
+    size_t num_operations = trace_.operations.size();
+    final_trace.write(reinterpret_cast<const char*>(&num_operations), sizeof(num_operations));
+    std::cout << "Wrote " << num_operations << " operations" << std::endl;
+
     // Write all operations
     for (const auto& op : trace_.operations) {
         op->serialize(final_trace);
@@ -70,20 +75,18 @@ void Tracer::finalizeTrace() {
 void Tracer::recordKernelLaunch(const KernelExecution& exec) {
     if (!initialized_) return;
     
-    // Create a unique_ptr with a copy of exec
-    auto exec_ptr = std::make_unique<KernelExecution>(exec);
+    auto exec_ptr = std::make_shared<KernelExecution>(exec);
     trace_.addOperation(std::move(exec_ptr));
-    exec.serialize(trace_file_);
+    // exec.serialize(trace_file_);
     flush();
 }
 
 void Tracer::recordMemoryOperation(const MemoryOperation& op) {
     if (!initialized_) return;
     
-    // Create a unique_ptr with a copy of op
-    auto op_ptr = std::make_unique<MemoryOperation>(op);
+    auto op_ptr = std::make_shared<MemoryOperation>(op);
     trace_.addOperation(std::move(op_ptr));
-    op.serialize(trace_file_);
+    // op.serialize(trace_file_);
     flush();
 }
 
@@ -145,33 +148,54 @@ void Tracer::flush() {
 }
 
 Tracer::Tracer(const std::string& path) {
-    trace_path_ = path;
-    std::cout << "Loading trace from: " << path << std::endl;
-    
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        throw std::runtime_error("Failed to open trace file: " + path);
+        throw std::runtime_error("Could not open trace file: " + path);
     }
-    
-    // Deserialize kernel manager
+
+    // Read kernel manager data first
     kernel_manager_.deserialize(file);
     
-    // Read operations until end of file
-    while (file.good() && !file.eof()) {
-        try {
-            auto op = Operation::deserialize(file);
-            if (op) {
-                trace_.operations.push_back(std::move(op));
-            }
-        } catch (const std::exception& e) {
-            if (!file.eof()) {
-                std::cerr << "Error reading operation: " << e.what() << std::endl;
-                throw;
-            }
-            break;
-        }
+    // Read number of operations
+    size_t num_operations;
+    file.read(reinterpret_cast<char*>(&num_operations), sizeof(num_operations));
+    std::cout << "Read " << num_operations << " operations" << std::endl;
+
+    // Read each operation
+    for (size_t i = 0; i < num_operations; i++) {
+        auto op = Operation::deserialize(file);
+        trace_.addOperation(std::move(op));
     }
+}
+
+std::shared_ptr<Operation> Operation::deserialize(std::ifstream& file) {
+    auto start_pos = file.tellg();
     
-    std::cout << "Trace loaded successfully with " 
-              << trace_.operations.size() << " operations" << std::endl;
+    // Read operation type
+    OperationType type;
+    file.read(reinterpret_cast<char*>(&type), sizeof(type));
+    
+    std::cout << "Read operation type 0x" << std::hex << static_cast<uint32_t>(type) 
+              << std::dec << " at position " << start_pos << std::endl;
+
+    // Validate magic numbers
+    if (type != OperationType::KERNEL && type != OperationType::MEMORY) {
+        std::cerr << "Invalid operation type magic number: 0x" 
+                  << std::hex << static_cast<uint32_t>(type) << std::dec << "\n"
+                  << "Expected either:\n"
+                  << "  KERNEL (0x" << std::hex << static_cast<uint32_t>(OperationType::KERNEL) << ")\n"
+                  << "  MEMORY (0x" << std::hex << static_cast<uint32_t>(OperationType::MEMORY) << ")"
+                  << std::dec << std::endl;
+        std::abort();
+    }
+
+    switch(type) {
+        case OperationType::KERNEL: 
+            return KernelExecution::create_from_file(file);
+        case OperationType::MEMORY: 
+            return MemoryOperation::create_from_file(file);
+        default: 
+            // This should never happen due to the validation above
+            std::abort();
+    }
 }

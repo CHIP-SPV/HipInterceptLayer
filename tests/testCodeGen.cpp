@@ -53,11 +53,14 @@ TEST(CodeGenTest, KernelWithScalarArguments) {
     
     // Find the operation index for scalarKernel
     int scalar_kernel_index = -1;
-    const auto& executions = tracer.instance().trace_.kernel_executions;
+    const auto& executions = tracer.instance().trace_.operations;
     for (size_t i = 0; i < executions.size(); i++) {
-        if (executions[i].kernel_name == "scalarKernel") {
-            scalar_kernel_index = i;
-            break;
+        if (executions[i]->isKernel()) {
+            const auto& kernel_exec = static_cast<const KernelExecution&>(*executions[i]);
+            if (kernel_exec.kernel_name == "scalarKernel") {
+                scalar_kernel_index = i;
+                break;
+            }
         }
     }
     

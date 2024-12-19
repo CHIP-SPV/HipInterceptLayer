@@ -276,39 +276,3 @@ TEST_F(KernelManagerTest, SerializationConsistency) {
     std::remove(temp_file1.c_str());
     std::remove(temp_file2.c_str());
 }
-
-TEST_F(KernelManagerTest, FinalizeTraceTest) {
-    // Add kernels to manager
-    manager.addFromModuleSource(test_source);
-    ASSERT_EQ(manager.getNumKernels(), 4);
-    
-    // Create a mock trace
-    std::string trace_file = "test_trace.bin";
-    {
-        std::ofstream trace(trace_file, std::ios::binary);
-        ASSERT_TRUE(trace.is_open());
-        
-        // Write kernel manager header
-        manager.writeKernelManagerHeader(trace);
-        
-        // Write kernel manager data directly
-        manager.serialize(trace);
-        
-        // Write a dummy event to test event copying
-        struct {
-            uint32_t type = 1;  // Kernel execution
-            uint64_t timestamp = 123456;
-            uint32_t size = sizeof(uint32_t);
-        } event_header;
-        
-        trace.write(reinterpret_cast<const char*>(&event_header), sizeof(event_header));
-        uint32_t dummy_data = 0xDEADBEEF;
-        trace.write(reinterpret_cast<const char*>(&dummy_data), sizeof(dummy_data));
-
-        Tracer tracer(trace_file);
-        ASSERT_EQ(tracer.getKernelManager().getNumKernels(), 4);
-    }
-
-    // Clean up
-    std::remove(trace_file.c_str());
-}

@@ -31,6 +31,9 @@
 // Memory state tracking
 class MemoryState {
 public:
+    static constexpr uint32_t MAGIC_START = 0x4D454D53; // 'MEMS'
+    static constexpr uint32_t MAGIC_END = 0x454D454D;   // 'EMEM'
+    
     std::unique_ptr<char[]> data;
     size_t size;
     
@@ -79,18 +82,54 @@ public:
     }
 
     void serialize(std::ofstream& file) const {
-        file.write(data.get(), size);
+        // Write start magic
+        file.write(reinterpret_cast<const char*>(&MAGIC_START), sizeof(MAGIC_START));
+        
+        // Write size
         file.write(reinterpret_cast<const char*>(&size), sizeof(size));
+        
+        // Write data if present
+        if (size > 0 && data) {
+            file.write(data.get(), size);
+        }
+        
+        // Write end magic
+        file.write(reinterpret_cast<const char*>(&MAGIC_END), sizeof(MAGIC_END));
     }
 
     static MemoryState deserialize(std::ifstream& file) {
+        // Read and verify start magic
+        uint32_t magic_start;
+        file.read(reinterpret_cast<char*>(&magic_start), sizeof(magic_start));
+        if (magic_start != MAGIC_START) {
+            std::cerr << "Invalid MemoryState start magic: 0x" 
+                      << std::hex << magic_start << std::dec 
+                      << " (expected 0x" << std::hex << MAGIC_START << std::dec << ")" 
+                      << std::endl;
+            throw std::runtime_error("Invalid MemoryState format");
+        }
+        
+        // Read size
         size_t size;
         file.read(reinterpret_cast<char*>(&size), sizeof(size));
         
+        // Create state and read data
         MemoryState state(size);
         if (size > 0) {
             file.read(state.data.get(), size);
         }
+        
+        // Read and verify end magic
+        uint32_t magic_end;
+        file.read(reinterpret_cast<char*>(&magic_end), sizeof(magic_end));
+        if (magic_end != MAGIC_END) {
+            std::cerr << "Invalid MemoryState end magic: 0x" 
+                      << std::hex << magic_end << std::dec 
+                      << " (expected 0x" << std::hex << MAGIC_END << std::dec << ")" 
+                      << std::endl;
+            throw std::runtime_error("Invalid MemoryState format");
+        }
+        
         return state;
     }
 };
@@ -99,9 +138,9 @@ public:
 class KernelExecution;
 class MemoryOperation;
 
-enum class OperationType {
-    KERNEL,
-    MEMORY
+enum class OperationType : uint32_t {
+    KERNEL = 0x4B524E4C,  // 'KRNL' in ASCII
+    MEMORY = 0x4D454D4F   // 'MEMO' in ASCII
 };
 
 class Operation {
@@ -109,6 +148,10 @@ public:
     std::shared_ptr<MemoryState> pre_state;
     std::shared_ptr<MemoryState> post_state;
     mutable size_t execution_order;
+    OperationType type;
+
+    bool isKernel() const { return type == OperationType::KERNEL; }
+    bool isMemory() const { return type == OperationType::MEMORY; }
     
     // Add virtual destructor
     virtual ~Operation() = default;
@@ -116,8 +159,8 @@ public:
     // Make this a friend function instead of a member function
     friend std::ostream& operator<<(std::ostream& os, const Operation& op);
 
-    Operation(std::shared_ptr<MemoryState> pre_state, std::shared_ptr<MemoryState> post_state)
-        : pre_state(pre_state), post_state(post_state) {}
+    Operation(std::shared_ptr<MemoryState> pre_state, std::shared_ptr<MemoryState> post_state, OperationType type)
+        : pre_state(pre_state), post_state(post_state), type(type) {}
 
     Operation() : pre_state(nullptr), post_state(nullptr), execution_order(0) {}
 
@@ -130,7 +173,8 @@ public:
         return execution_order;
     }
 
-    static std::unique_ptr<Operation> deserialize(std::ifstream& file);
+    static std::shared_ptr<Operation> deserialize(std::ifstream& file);
+
     virtual void serialize(std::ofstream& file) const = 0;
     
 protected:
@@ -155,7 +199,7 @@ class KernelExecution : public Operation {
     hipStream_t stream;
     
     // Add default constructor
-    KernelExecution() : Operation(), 
+    KernelExecution() : Operation(nullptr, nullptr, OperationType::KERNEL), 
         function_address(nullptr),
         kernel_name(),
         grid_dim(),
@@ -172,7 +216,7 @@ class KernelExecution : public Operation {
                    dim3 block_dim,
                    size_t shared_mem,
                    hipStream_t stream)
-        : Operation(pre_state, post_state),
+        : Operation(pre_state, post_state, OperationType::KERNEL),
           function_address(function_address),
           kernel_name(kernel_name),
           grid_dim(grid_dim),
@@ -193,9 +237,10 @@ class KernelExecution : public Operation {
     }
 
     virtual void serialize(std::ofstream& file) const override {
+        std::cout << "Serializing KernelExecution" << std::endl;
         // Write type identifier
-        OperationType type = OperationType::KERNEL;
-        file.write(reinterpret_cast<const char*>(&type), sizeof(type));
+        OperationType op_type = OperationType::KERNEL;
+        file.write(reinterpret_cast<const char*>(&op_type), sizeof(op_type));
         
         // Write kernel name length and data
         uint32_t name_length = static_cast<uint32_t>(kernel_name.length());
@@ -218,16 +263,19 @@ class KernelExecution : public Operation {
         }
         
         // Write memory states if present
-        if (pre_state) {
-            pre_state->serialize(file);
-        }
-        if (post_state) {
-            post_state->serialize(file);
-        }
+        pre_state.get()->serialize(file);
+        post_state.get()->serialize(file);
+    }
+
+    static std::shared_ptr<KernelExecution> create_from_file(std::ifstream& file) {
+        auto exec = std::make_shared<KernelExecution>();
+        exec->deserializeImpl(file);
+        return exec;
     }
 
     protected:
     void deserializeImpl(std::ifstream& file) override {
+        std::cout << "Deserializing KernelExecution" << std::endl;
         // Read kernel name
         uint32_t name_length;
         file.read(reinterpret_cast<char*>(&name_length), sizeof(name_length));
@@ -257,12 +305,7 @@ class KernelExecution : public Operation {
         post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
     }
 
-    // Static factory method becomes a helper
-    static std::unique_ptr<KernelExecution> create_from_file(std::ifstream& file) {
-        auto exec = std::make_unique<KernelExecution>();
-        exec->deserializeImpl(file);
-        return exec;
-    }
+
 };
 
 class MemoryOperation : public Operation {
@@ -276,7 +319,7 @@ class MemoryOperation : public Operation {
     hipStream_t stream;
 
     // Add default constructor
-    MemoryOperation() : Operation(),
+    MemoryOperation() : Operation(nullptr, nullptr, OperationType::MEMORY),
         type(MemoryOpType::COPY),
         dst(nullptr),
         src(nullptr),
@@ -295,7 +338,7 @@ class MemoryOperation : public Operation {
                    int value,
                    hipMemcpyKind kind,
                    hipStream_t stream)
-        : Operation(pre_state, post_state),
+        : Operation(pre_state, post_state, OperationType::MEMORY),
           type(type),
           dst(dst),
           src(src),
@@ -314,9 +357,10 @@ class MemoryOperation : public Operation {
     }
 
     virtual void serialize(std::ofstream& file) const override {
+        std::cout << "Serializing MemoryOperation" << std::endl;
         // Write type identifier
-        OperationType type = OperationType::MEMORY;
-        file.write(reinterpret_cast<const char*>(&type), sizeof(type));
+        OperationType op_type = OperationType::MEMORY;
+        file.write(reinterpret_cast<const char*>(&op_type), sizeof(op_type));
         
         // Write memory operation data
         file.write(reinterpret_cast<const char*>(&type), sizeof(type));
@@ -329,12 +373,30 @@ class MemoryOperation : public Operation {
         file.write(reinterpret_cast<const char*>(&execution_order), sizeof(execution_order));
         
         // Write memory states
-        pre_state->serialize(file);
-        post_state->serialize(file);
+        if (pre_state) {
+            pre_state->serialize(file);
+        } else {
+            size_t size = 0;
+            file.write(reinterpret_cast<const char*>(&size), sizeof(size));
+        }
+
+        if (post_state) {
+            post_state->serialize(file);
+        } else {
+            size_t size = 0;
+            file.write(reinterpret_cast<const char*>(&size), sizeof(size));
+        }
+    }
+
+    static std::shared_ptr<MemoryOperation> create_from_file(std::ifstream& file) {
+        auto op = std::make_shared<MemoryOperation>();
+        op->deserializeImpl(file);
+        return op;
     }
 
     protected:
     void deserializeImpl(std::ifstream& file) override {
+        std::cout << "Deserializing MemoryOperation" << std::endl;
         // Read memory operation data
         file.read(reinterpret_cast<char*>(&type), sizeof(type));
         file.read(reinterpret_cast<char*>(&dst), sizeof(dst));
@@ -349,17 +411,11 @@ class MemoryOperation : public Operation {
         pre_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
         post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
     }
-
-    static std::unique_ptr<MemoryOperation> create_from_file(std::ifstream& file) {
-        auto op = std::make_unique<MemoryOperation>();
-        op->deserializeImpl(file);
-        return op;
-    }
 };
 
 class Trace {
     public:
-    std::vector<std::unique_ptr<Operation>> operations;  // Change to store unique_ptrs
+    std::vector<std::shared_ptr<Operation>> operations;  // Change to store shared_ptrs
     uint64_t timestamp;
 
     void operator<<(std::ostream& os) const {
@@ -369,7 +425,7 @@ class Trace {
         }
     }
 
-    void addOperation(std::unique_ptr<Operation> op) {  // Take ownership of operation
+    void addOperation(std::shared_ptr<Operation> op) {  // Take ownership of operation
         op->setExecutionOrder(operations.size());
         operations.push_back(std::move(op));
     }
@@ -411,6 +467,10 @@ public:
             }
         }
         return os;
+    }
+
+    Trace getTrace() && {
+        return std::move(trace_);
     }
 
 private:
