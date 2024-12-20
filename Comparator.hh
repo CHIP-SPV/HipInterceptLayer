@@ -8,6 +8,8 @@ class Comparator {
 public:
     Comparator(const std::string& path1, const std::string& path2) 
         : tracer1(path1), tracer2(path2) {
+        tracer1.setSerializeTrace(false);
+        tracer2.setSerializeTrace(false);
     }
 
     void compare(std::ostream& os) const {

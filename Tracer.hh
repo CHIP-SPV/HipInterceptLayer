@@ -433,6 +433,7 @@ class Trace {
 
 
 class Tracer {
+    bool serialize_trace_ = true;
 public:
     KernelManager& getKernelManager() { return kernel_manager_; }
     const KernelManager& getKernelManager() const { return kernel_manager_; }
@@ -464,9 +465,18 @@ public:
     Tracer& operator=(const Tracer&) = delete;
     Tracer(Tracer&&) = delete;
     Tracer& operator=(Tracer&&) = delete;
+    void setSerializeTrace(bool serialize) { serialize_trace_ = serialize; }
 
     Tracer(const std::string& path); // Used for loading the trace from file
-    ~Tracer() { std::cout << "Tracer destructor called" << std::endl; finalizeTrace(); }
+    Tracer(); // Used for recording the trace
+    void initializeTraceFile();
+
+    ~Tracer() { 
+        std::cout << "Tracer destructor called" << std::endl; 
+        if (serialize_trace_) {
+            finalizeTrace();
+        }
+    }
     
     void finalizeTrace();
 
@@ -488,9 +498,6 @@ public:
     }
 
 private:
-    Tracer(); // Used for recording the trace
-
-    void initializeTraceFile();
     void writeEvent(uint32_t type, const void* data, size_t size);
     void writeKernelExecution(const KernelExecution& exec);
     void writeMemoryOperation(const MemoryOperation& op);

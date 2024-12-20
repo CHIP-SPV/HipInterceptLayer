@@ -3,6 +3,7 @@ add_executable(unit_tests
   ../Tracer.cc
   testKernelManager.cpp 
   testCodeGen.cpp
+  testComparator.cpp
 )
 
 target_link_libraries(unit_tests
