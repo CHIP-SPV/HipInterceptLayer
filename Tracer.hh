@@ -508,9 +508,9 @@ public:
         os << "Trace: " << tracer.trace_.operations.size() << " operations" << std::endl;
         for (const auto& op : tracer.trace_.operations) {
             if (auto kernel_exec = dynamic_cast<const KernelExecution*>(op.get())) {
-                os << *kernel_exec << std::endl;
+                os << "Op#" << op->execution_order << " " << *kernel_exec << std::endl;
             } else if (auto mem_op = dynamic_cast<const MemoryOperation*>(op.get())) {
-                os << *mem_op << std::endl;
+                os << "Op#" << op->execution_order << " " << *mem_op << std::endl;
             }
         }
         return os;

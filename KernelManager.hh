@@ -99,7 +99,7 @@ public:
     std::string getBaseType() const {
         // Remove __restrict__ and similar qualifiers
         std::string base_type = type;
-        std::regex qualifiers(R"(\s*(?:__restrict__|__restrict|__global__|__device__|__host__|__constant__|__shared__|__managed__|__pinned__|__constant__|__shared__|__managed__|__pinned__))");
+        std::regex qualifiers(R"(\s*(?:const|__restrict__|__restrict|__global__|__device__|__host__|__constant__|__shared__|__managed__|__pinned__|__constant__|__shared__|__managed__|__pinned__))");
         base_type = std::regex_replace(base_type, qualifiers, "");
         // Remove any trailing spaces
         base_type = std::regex_replace(base_type, std::regex("\\s+$"), "");

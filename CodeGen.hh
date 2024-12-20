@@ -17,7 +17,9 @@ public:
   Tracer tracer;
   std::string trace_file_path_;
   CodeGen(const std::string &trace_file_path)
-      : tracer(trace_file_path), operation_index_(-1), trace_file_path_(trace_file_path), kernel_manager_(tracer.getKernelManager()) {}
+      : tracer(trace_file_path), operation_index_(-1), trace_file_path_(trace_file_path), kernel_manager_(tracer.getKernelManager()) {
+        tracer.setSerializeTrace(false);
+      }
   std::string generateReproducer(std::string kernel_name, int instance_index) {
     // Find all operations for the given kernel name and instance index
     std::vector<int> operation_indices;
@@ -86,6 +88,8 @@ public:
     file << generateReproducer(operation_index);
     file.close();
 
+    std::cout << "\n\nGenerated code:\n" << std::ifstream(filename).rdbuf() << std::endl;
+
     return filename;
   }
 
@@ -98,8 +102,8 @@ public:
 
     // Construct the hipcc command
     std::stringstream cmd;
-    cmd << "hipcc -w -o " << output_file << " " << filename;
-
+    cmd << "hipcc -O0 -g -w -o " << output_file << " " << filename;
+    
     std::cout << "Executing: " << cmd.str() << std::endl;
 
     // Execute the command
@@ -139,7 +143,7 @@ private:
        << "#include <cstring>\n"
        << "#include <fstream>\n\n";
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
-    std::string source = kernel.getSource();
+    std::string source = kernel.getModuleSource();
 
     if (!source.empty()) {
       ss << source << "\n\n";
@@ -224,6 +228,16 @@ private:
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
     const auto &args = kernel.getArguments();
 
+    // Add error checking macro
+    ss << "    #define CHECK_HIP(cmd) \\\n"
+       << "        do { \\\n"
+       << "            hipError_t error = (cmd); \\\n"
+       << "            if (error != hipSuccess) { \\\n"
+       << "                std::cerr << \"HIP error: \" << hipGetErrorString(error) << \" at \" << __FILE__ << \":\" << __LINE__ << std::endl; \\\n"
+       << "                return 1; \\\n"
+       << "            } \\\n"
+       << "        } while (0)\n\n";
+
     for (size_t i = 0; i < args.size(); i++) {
       const auto &arg = args[i];
       std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
@@ -233,20 +247,17 @@ private:
         ss << "    // Allocate and initialize " << var_name << "\n";
         ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc("
            << size << ");\n";
-        ss << "    err = hipMalloc((void**)&" << var_name << "_d, " << size
-           << ");\n";
-        ss << "    if (err != hipSuccess) { std::cerr << \"Failed to "
-              "allocate "
-              "memory\\n\"; return 1; }\n";
+        ss << "    if (!" << var_name << "_h) { std::cerr << \"Failed to allocate host memory\\n\"; return 1; }\n";
+        
+        // Use CHECK_HIP macro for device operations
+        ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << size << "));\n";
 
         // Load data from trace file
         ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
            << size << ", " << var_name << "_h)) { return 1; }\n";
 
-        ss << "    err = hipMemcpy(" << var_name << "_d, " << var_name << "_h, "
-           << size << ", hipMemcpyHostToDevice);\n";
-        ss << "    if (err != hipSuccess) { std::cerr << \"Failed to copy "
-              "memory\\n\"; return 1; }\n\n";
+        ss << "    CHECK_HIP(hipMemcpy(" << var_name << "_d, " << var_name << "_h, "
+           << size << ", hipMemcpyHostToDevice));\n\n";
 
         current_offset += size;
       } else if (!arg.isPointer() && i < op->pre_state->size) {
@@ -281,7 +292,10 @@ private:
           "arg_" + std::to_string(i) + "_" + op->kernel_name;
       ss << (args[i].isPointer() ? var_name + "_d" : var_name);
     }
-    ss << ");\n\n";
+    ss << ");\n";
+    // Add synchronization and error checking after kernel launch
+    ss << "    CHECK_HIP(hipDeviceSynchronize());\n"
+       << "    CHECK_HIP(hipGetLastError());\n\n";
   }
 
   void generateCleanup(std::stringstream &ss) {
