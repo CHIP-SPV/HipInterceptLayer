@@ -40,11 +40,14 @@ TEST_F(ComparatorTest, IdenticalTracesCompareEqual) {
 
 TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    std::string new_trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-1.trace";
+    int num_ops = 0;
 
     // Create temporary trace files
     {
         Tracer tracer1(trace_file);
         Tracer tracer2(trace_file);
+        num_ops = tracer1.getNumOperations();
         
         // Record kernel executions with different configurations
         KernelExecution kernel1;
@@ -58,24 +61,30 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
         kernel2.grid_dim = {2, 1, 1};  // Different grid dimension
         kernel2.block_dim = {256, 1, 1};
         kernel2.shared_mem = 0;
-        
-        tracer1.trace_.operations.push_back(std::make_unique<KernelExecution>(kernel1));
-        tracer2.trace_.operations.push_back(std::make_unique<KernelExecution>(kernel2));
+
+        tracer1.trace_.addOperation(std::make_unique<KernelExecution>(kernel1));
+
+        tracer2.setFilePath(new_trace_file);
+        tracer2.trace_.addOperation(std::make_unique<KernelExecution>(kernel2));
     }
 
     // Compare the traces
     std::stringstream output;
-    Comparator comparator(trace_file, trace_file);
+    Comparator comparator(trace_file, new_trace_file);
+    // assert that number of executions increased by 1
+    EXPECT_EQ(comparator.tracer1.getNumOperations(), num_ops + 1);
+    EXPECT_EQ(comparator.tracer2.getNumOperations(), num_ops + 1);
     comparator.compare(output);
     
     // Verify differences were reported
     std::string result = output.str();
     EXPECT_NE(result.find("Traces differ"), std::string::npos);
-    EXPECT_NE(result.find("Op#0: Kernel(testKernel)"), std::string::npos);
+    EXPECT_NE(result.find("Kernel(testKernel)"), std::string::npos);
 }
 
 TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
+    std::string new_trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-1.trace";
 
     // Create temporary trace files
     {
@@ -94,12 +103,14 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
         mem2.kind = hipMemcpyHostToDevice;
         
         tracer1.trace_.operations.push_back(std::make_unique<MemoryOperation>(mem1));
+
+        tracer2.setFilePath(new_trace_file);
         tracer2.trace_.operations.push_back(std::make_unique<MemoryOperation>(mem2));
     }
 
     // Compare the traces
     std::stringstream output;
-    Comparator comparator(trace_file, trace_file);
+    Comparator comparator(trace_file, new_trace_file);
     comparator.compare(output);
     
     // Verify differences were reported

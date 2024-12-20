@@ -205,7 +205,10 @@ class KernelExecution : public Operation {
         grid_dim(),
         block_dim(),
         shared_mem(0),
-        stream(nullptr) {}
+        stream(nullptr) {
+        pre_state = std::make_shared<MemoryState>(1);
+        post_state = std::make_shared<MemoryState>(1);
+    }
 
     // Existing constructor
     KernelExecution(std::shared_ptr<MemoryState> pre_state, 
@@ -222,7 +225,10 @@ class KernelExecution : public Operation {
           grid_dim(grid_dim),
           block_dim(block_dim),
           shared_mem(shared_mem),
-          stream(stream) {}
+          stream(stream) {
+            pre_state = std::make_shared<MemoryState>(1);
+            post_state = std::make_shared<MemoryState>(1);
+          }
     
     std::vector<void*> arg_ptrs;
     std::vector<size_t> arg_sizes;
@@ -283,6 +289,12 @@ class KernelExecution : public Operation {
         file.read(name_buffer.data(), name_length);
         name_buffer[name_length] = '\0';
         kernel_name = std::string(name_buffer.data());
+        if (kernel_name.empty()) {
+            std::cerr << "Kernel name is empty" << std::endl;
+            std::abort();
+        } else {
+            std::cout << "deserialized Kernel name: " << kernel_name << std::endl;
+        }
         
         // Read kernel data
         file.read(reinterpret_cast<char*>(&function_address), sizeof(function_address));
@@ -326,7 +338,10 @@ class MemoryOperation : public Operation {
         size(0),
         value(0),
         kind(hipMemcpyHostToHost),
-        stream(nullptr) {}
+        stream(nullptr) {
+            pre_state = std::make_shared<MemoryState>(1);
+            post_state = std::make_shared<MemoryState>(1);
+        }
 
     // Existing constructor
     MemoryOperation(std::shared_ptr<MemoryState> pre_state,
@@ -345,7 +360,10 @@ class MemoryOperation : public Operation {
           size(size),
           value(value),
           kind(kind),
-          stream(stream) {}
+          stream(stream) {
+            pre_state = std::make_shared<MemoryState>(1);
+            post_state = std::make_shared<MemoryState>(1);
+        }
 
     // Replace operator<< with writeToStream
     void writeToStream(std::ostream& os) const override {
@@ -434,7 +452,11 @@ class Trace {
 
 class Tracer {
     bool serialize_trace_ = true;
+    std::string file_path;
+    std::ofstream trace_file_;
+    bool initialized_;
 public:
+    void setFilePath(const std::string& path) { file_path = path; }
     KernelManager& getKernelManager() { return kernel_manager_; }
     const KernelManager& getKernelManager() const { return kernel_manager_; }
 
@@ -474,6 +496,7 @@ public:
     ~Tracer() { 
         std::cout << "Tracer destructor called" << std::endl; 
         if (serialize_trace_) {
+            std::cout << "Serializing trace" << std::endl;
             finalizeTrace();
         }
     }
@@ -506,9 +529,7 @@ private:
     
     std::string getTraceFilePath() const;
     
-    std::ofstream trace_file_;
-    std::string trace_path_;
-    bool initialized_;
+
         
     static KernelExecution readKernelExecution(std::ifstream& file);
     static MemoryOperation readMemoryOperation(std::ifstream& file);

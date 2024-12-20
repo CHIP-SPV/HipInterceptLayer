@@ -15,17 +15,17 @@ Tracer::Tracer() :
 void Tracer::initializeTraceFile() {
     if (initialized_) return;
     
-    trace_path_ = getTraceFilePath();
-    if (trace_path_.empty()) return; // Skip tracing for this process
+    file_path = getTraceFilePath();
+    if (file_path.empty()) return; // Skip tracing for this process
     
-    trace_file_.open(trace_path_, std::ios::binary);
+    trace_file_.open(file_path, std::ios::binary);
     if (!trace_file_) {
-        std::cerr << "Failed to open trace file: " << trace_path_ << std::endl;
+        std::cerr << "Failed to open trace file: " << file_path << std::endl;
         return;
     }
     
     std::cout << "\n=== HIP Trace File ===\n"
-              << "Writing trace to: " << trace_path_ << "\n"
+              << "Writing trace to: " << file_path << "\n"
               << "===================\n\n";
     // Don't need to write tracer header here since this won't be the first thing in the file
     // Kernel Manager will write its header at the beginning of the file
@@ -40,7 +40,7 @@ void Tracer::finalizeTrace() {
     std::cout << "Finalizing trace with " << kernel_manager_.getNumKernels() << " kernels" << std::endl;
     
     // Create a new file for the final trace
-    std::string final_trace_path = trace_path_ + ".final";
+    std::string final_trace_path = file_path + ".final";
     std::ofstream final_trace(final_trace_path, std::ios::binary);
     if (!final_trace) {
         std::cerr << "Failed to create final trace file: " << final_trace_path << std::endl;
@@ -65,7 +65,8 @@ void Tracer::finalizeTrace() {
     trace_file_.close();
     
     // Replace original with final
-    std::filesystem::rename(final_trace_path, trace_path_);
+    std::cout << "Replacing " << file_path << " with " << final_trace_path << std::endl;
+    std::filesystem::rename(final_trace_path, file_path);
     
     std::cout << "\n\nTrace finalized successfully" << std::endl;
     kernel_manager_ << std::cout;
@@ -147,7 +148,7 @@ void Tracer::flush() {
     trace_file_.flush();
 }
 
-Tracer::Tracer(const std::string& path) {
+Tracer::Tracer(const std::string& path) : file_path{path} {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         throw std::runtime_error("Could not open trace file: " + path);
@@ -168,6 +169,7 @@ Tracer::Tracer(const std::string& path) {
     }
 
     std::cout << "Trace loaded from file: " << path << " with " << trace_.operations.size() << " operations" << std::endl;
+    initialized_ = true;
 }
 
 std::shared_ptr<Operation> Operation::deserialize(std::ifstream& file) {

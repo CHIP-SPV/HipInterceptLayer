@@ -21,30 +21,31 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
 
-        // Print progress bar
-        const int bar_width = 50;
-        int progress = 0;
+        // // Print progress bar
+        // const int bar_width = 50;
+        // int progress = 0;
         
-        os << "[";
-        for (size_t i = 0; i < trace1.operations.size(); i++) {
-            int new_progress = static_cast<int>((i + 1) * bar_width / trace1.operations.size());
-            while (progress < new_progress) {
-                os << "=";
-                progress++;
-            }
-            os.flush();
-        }
-        os << "] 100% (" << trace1.operations.size() << "/" << trace1.operations.size() << ")\n\n";
+        // os << "[";
+        // for (size_t i = 0; i < trace1.operations.size(); i++) {
+        //     int new_progress = static_cast<int>((i + 1) * bar_width / trace1.operations.size());
+        //     while (progress < new_progress) {
+        //         os << "=";
+        //         progress++;
+        //     }
+        //     os.flush();
+        // }
+        // os << "] 100% (" << trace1.operations.size() << "/" << trace1.operations.size() << ")\n\n";
 
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        // auto end = std::chrono::high_resolution_clock::now();
+        // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         
-        os << "Total comparison took " << duration.count() << "ms\n";
+        // os << "Total comparison took " << duration.count() << "ms\n";
         
         bool traces_differ = false;
-        for (size_t i = 0; i < trace1.operations.size(); i++) {
-            const auto& op1 = trace1.operations[i];
-            const auto& op2 = trace2.operations[i];
+        size_t num_operations = std::min(trace1.operations.size(), trace2.operations.size());
+        for (size_t i = 0; i < num_operations; i++) {
+            auto op1 = tracer1.getOperation(i);
+            auto op2 = tracer2.getOperation(i);
 
             if (!compareOperations(*op1, *op2)) {
                 if (!traces_differ) {
@@ -61,10 +62,9 @@ public:
         return os;
     }
 
-private:
     Tracer tracer1;
-    Tracer tracer2;
-
+    Tracer tracer2; 
+private:
     bool compareOperations(const Operation& op1, const Operation& op2) const {
         // Compare memory states if they exist
         if (op1.pre_state && op2.pre_state) {
@@ -93,6 +93,7 @@ private:
     }
 
     bool compareKernelExecutions(const KernelExecution& k1, const KernelExecution& k2) const {
+        std::cout << "Comparing kernels: " << k1.kernel_name << " and " << k2.kernel_name << std::endl;
         return k1.kernel_name == k2.kernel_name &&
                k1.grid_dim.x == k2.grid_dim.x &&
                k1.grid_dim.y == k2.grid_dim.y &&

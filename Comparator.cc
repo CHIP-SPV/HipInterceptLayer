@@ -15,12 +15,17 @@ namespace {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <trace1> <trace2>\n";
+    if (argc != 2 && argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <trace1> [trace2]\n";
         return 1;
     }
 
-    Comparator comparator(argv[1], argv[2]);
-    std::cout << comparator;
+    if (argc == 2) {
+        Tracer tracer1(argv[1]);
+        tracer1.trace_ << std::cout;
+    } else {  // argc == 3
+        Comparator comparator(argv[1], argv[2]);
+        std::cout << comparator;
+    }
     return 0;
 }
