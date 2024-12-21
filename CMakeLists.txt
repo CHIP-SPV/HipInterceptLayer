@@ -5,7 +5,14 @@ project(HIPInterceptLayer VERSION 1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-message(STATUS "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
+# Require hipcc compiler
+if(NOT DEFINED CMAKE_CXX_COMPILER)
+  set(CMAKE_CXX_COMPILER hipcc)
+elseif(NOT CMAKE_CXX_COMPILER MATCHES ".*hipcc$")
+  message(FATAL_ERROR "HIP Intercept Layer requires hipcc compiler. Current compiler: ${CMAKE_CXX_COMPILER}")
+endif()
+
+add_definitions(-DHIPCC_PATH="${CMAKE_CXX_COMPILER}")
 
 add_compile_options(-g)
 

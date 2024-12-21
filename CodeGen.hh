@@ -102,7 +102,7 @@ public:
 
     // Construct the hipcc command
     std::stringstream cmd;
-    cmd << "hipcc -O0 -g -w -o " << output_file << " " << filename;
+    cmd << HIPCC_PATH << " -O0 -g -w -o " << output_file << " " << filename;
     
     std::cout << "Executing: " << cmd.str() << std::endl;
 
@@ -141,7 +141,22 @@ private:
     ss << "#include <hip/hip_runtime.h>\n"
        << "#include <iostream>\n"
        << "#include <cstring>\n"
-       << "#include <fstream>\n\n";
+       << "#include <fstream>\n"
+       << "#include <iomanip>\n"
+       << "#include <sstream>\n"
+       << "#include <functional>\n\n";
+
+    // Add hash calculation function
+    ss << "inline std::string calculateHash(const void* data, size_t size) {\n"
+       << "    const unsigned char* bytes = static_cast<const unsigned char*>(data);\n"
+       << "    std::hash<std::string> hasher;\n"
+       << "    std::string data_str(reinterpret_cast<const char*>(bytes), size);\n"
+       << "    size_t hash = hasher(data_str);\n"
+       << "    std::stringstream ss;\n"
+       << "    ss << std::hex << std::setfill('0') << std::setw(6) << (hash & 0xFFFFFF);\n"
+       << "    return ss.str();\n"
+       << "}\n\n";
+
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
     std::string source = kernel.getModuleSource();
 
@@ -223,7 +238,7 @@ private:
                               KernelExecution *op) {
     size_t current_offset = 0;
     if (!op->isKernel()) {
-      throw std::runtime_error("Operation is not a kernel execution");
+        throw std::runtime_error("Operation is not a kernel execution");
     }
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
     const auto &args = kernel.getArguments();
@@ -239,35 +254,36 @@ private:
        << "        } while (0)\n\n";
 
     for (size_t i = 0; i < args.size(); i++) {
-      const auto &arg = args[i];
-      std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
+        const auto &arg = args[i];
+        std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
 
-      if (arg.isPointer() && i < op->pre_state->size) {
-        size_t size = op->pre_state->size;
-        ss << "    // Allocate and initialize " << var_name << "\n";
-        ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc("
-           << size << ");\n";
-        ss << "    if (!" << var_name << "_h) { std::cerr << \"Failed to allocate host memory\\n\"; return 1; }\n";
-        
-        // Use CHECK_HIP macro for device operations
-        ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << size << "));\n";
+        if (arg.isPointer() && i < op->pre_state->size) {
+            // Get the actual size from the shadow copy
+            size_t size = op->pre_state->size;
+            
+            ss << "    // Allocate and initialize " << var_name << "\n";
+            ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc("
+               << size << ");\n";
+            ss << "    if (!" << var_name << "_h) { std::cerr << \"Failed to allocate host memory\\n\"; return 1; }\n";
+            
+            ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << size << "));\n";
 
-        // Load data from trace file
-        ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
-           << size << ", " << var_name << "_h)) { return 1; }\n";
+            // Load data from trace file
+            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
+               << size << ", " << var_name << "_h)) { return 1; }\n";
 
-        ss << "    CHECK_HIP(hipMemcpy(" << var_name << "_d, " << var_name << "_h, "
-           << size << ", hipMemcpyHostToDevice));\n\n";
+            ss << "    CHECK_HIP(hipMemcpy(" << var_name << "_d, " << var_name << "_h, "
+               << size << ", hipMemcpyHostToDevice));\n\n";
 
-        current_offset += size;
-      } else if (!arg.isPointer() && i < op->pre_state->size) {
-        size_t size = sizeof(arg.getBaseType());
-        ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
-           << "sizeof(" << arg.getBaseType() << "), &" << var_name
-           << ")) { return 1; }\n";
+            current_offset += size;
+        } else if (!arg.isPointer() && i < op->pre_state->size) {
+            size_t size = sizeof(arg.getBaseType());
+            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
+               << "sizeof(" << arg.getBaseType() << "), &" << var_name
+               << ")) { return 1; }\n";
 
-        current_offset += size;
-      }
+            current_offset += size;
+        }
     }
   }
 
@@ -296,6 +312,21 @@ private:
     // Add synchronization and error checking after kernel launch
     ss << "    CHECK_HIP(hipDeviceSynchronize());\n"
        << "    CHECK_HIP(hipGetLastError());\n\n";
+    
+    // Add verification code for pointer arguments
+    for (size_t i = 0; i < args.size(); i++) {
+        const auto &arg = args[i];
+        if (arg.isPointer() && i < op->pre_state->size) {
+            std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
+            size_t size = op->pre_state->size;
+            
+            ss << "    // Copy back and verify " << var_name << "\n"
+               << "    CHECK_HIP(hipMemcpy(" << var_name << "_h, " << var_name << "_d, "
+               << size << ", hipMemcpyDeviceToHost));\n"
+               << "    std::cout << \"Hash for " << var_name << ": \" << "
+               << "calculateHash(" << var_name << "_h, " << size << ") << std::endl;\n\n";
+        }
+    }
   }
 
   void generateCleanup(std::stringstream &ss) {
