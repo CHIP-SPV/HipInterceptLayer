@@ -44,29 +44,30 @@ target_link_libraries(unit_tests
 )
 
 # Add custom target to run test_kernels with LD_PRELOAD
-add_custom_target(run_test_kernels
-    COMMAND ${CMAKE_COMMAND} -E remove -f test_kernels-0.trace
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/test_kernels-0.trace
     COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:test_kernels>
     DEPENDS test_kernels HIPIntercept
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Running test_kernels with HIPIntercept preloaded"
 )
 
-add_custom_target(run_data_verification
-    COMMAND ${CMAKE_COMMAND} -E remove -f data_verification-0.trace
+add_custom_target(run_test_kernels
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_kernels-0.trace
+)
+
+# Add custom command to generate data_verification trace
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/data_verification-0.trace
     COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:data_verification>
     DEPENDS data_verification HIPIntercept
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Running data_verification with HIPIntercept preloaded"
 )
 
-# Make test_kernels.trace available for unit tests
-add_dependencies(unit_tests run_test_kernels)
+add_custom_target(run_data_verification
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/data_verification-0.trace
+)
 
-# Make sure run_test_kernels is built by default
-add_custom_target(all_tests ALL DEPENDS run_test_kernels)
-
-# Make sure the trace file exists before running tests
 add_dependencies(unit_tests run_test_kernels run_data_verification)
-
 gtest_discover_tests(unit_tests)
