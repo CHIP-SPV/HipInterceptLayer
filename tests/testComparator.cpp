@@ -124,54 +124,81 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
     
     // Load the trace
     Tracer tracer(trace_file);
+    std::cout << tracer;
     
-    // We expect 3 operations in order:
-    // 0. hipMalloc
-    // 1. hipMemcpy (Host to Device)
-    // 2. Kernel execution (simpleKernel)
-    // 3. hipMemcpy (Device to Host)
     ASSERT_EQ(tracer.getNumOperations(), 4);
     
     // Get operations
-    auto op1 = tracer.getOperation(0);
-    auto op2 = tracer.getOperation(1);
-    auto op3 = tracer.getOperation(2);
-    auto op4 = tracer.getOperation(3);
+    auto op0 = tracer.getOperation(0); //malloc
+    auto op1 = tracer.getOperation(1); //memcpy
+    auto op2 = tracer.getOperation(2); //kernel
+    auto op3 = tracer.getOperation(3); //memcpy
     
+    // Debug output for operation types
+    std::cout << "Operation 1 type: " << (op1->isMemory() ? "Memory" : "Kernel") << std::endl;
+    std::cout << "Operation 2 type: " << (op2->isKernel() ? "Kernel" : "Memory") << std::endl;
+    
+    // Verify first malloc
+    ASSERT_TRUE(op0->isMemory()) << "First operation is not a memory operation";
+    auto malloc1 = static_cast<const MemoryOperation*>(op0.get());
+    EXPECT_EQ(malloc1->kind, hipMemcpyHostToHost) << "First memory operation is not hipMemcpyHostToHost";
+
+
     // Verify first memcpy (Host to Device)
-    ASSERT_TRUE(op1->isMemory());
+    ASSERT_TRUE(op1->isMemory()) << "First operation is not a memory operation";
     auto memcpy1 = static_cast<const MemoryOperation*>(op1.get());
-    EXPECT_EQ(memcpy1->kind, hipMemcpyHostToDevice);
+    EXPECT_EQ(memcpy1->kind, hipMemcpyHostToDevice) << "First memory operation is not Host to Device";
     
     // Verify kernel execution
-    ASSERT_TRUE(op2->isKernel());
+    ASSERT_TRUE(op2->isKernel()) << "Second operation is not a kernel";
     auto kernel = static_cast<const KernelExecution*>(op2.get());
-    EXPECT_EQ(kernel->kernel_name, "simpleKernel");
+    EXPECT_EQ(kernel->kernel_name, "simpleKernel") << "Kernel name mismatch";
     
     // Verify kernel's pre and post states
-    ASSERT_TRUE(kernel->pre_state != nullptr);
-    ASSERT_TRUE(kernel->post_state != nullptr);
+    ASSERT_TRUE(kernel->pre_state != nullptr) << "Pre-state is null";
+    ASSERT_TRUE(kernel->post_state != nullptr) << "Post-state is null";
+    
+    std::cout << "Pre-state size: " << kernel->pre_state->size << std::endl;
+    std::cout << "Post-state size: " << kernel->post_state->size << std::endl;
+    
     EXPECT_EQ(kernel->pre_state->size, 1024 * sizeof(float));
     EXPECT_EQ(kernel->post_state->size, 1024 * sizeof(float));
     
     // Verify the data in pre_state matches input pattern
     float* pre_data = reinterpret_cast<float*>(kernel->pre_state->data.get());
-    for (int i = 0; i < 1024; i++) {
-        EXPECT_FLOAT_EQ(pre_data[i], 1.0f + i) 
-            << "Pre-state mismatch at index " << i;
-    }
-    
-    // Verify the data in post_state matches expected output
     float* post_data = reinterpret_cast<float*>(kernel->post_state->data.get());
+    
+    // Print first few values for debugging
+    std::cout << "First few pre-state values: ";
+    for (int i = 0; i < 5; i++) {
+        std::cout << pre_data[i] << " ";
+    }
+    std::cout << std::endl;
+    
+    std::cout << "First few post-state values: ";
+    for (int i = 0; i < 5; i++) {
+        std::cout << post_data[i] << " ";
+    }
+    std::cout << std::endl;
+    
     for (int i = 0; i < 1024; i++) {
-        EXPECT_FLOAT_EQ(post_data[i], (1.0f + i) * 2.0f) 
-            << "Post-state mismatch at index " << i;
+        // Verify pre-state data
+        EXPECT_FLOAT_EQ(pre_data[i], 1.0f + i) 
+            << "Pre-state mismatch at index " << i 
+            << ". Expected: " << (1.0f + i) 
+            << ", Got: " << pre_data[i];
+        
+        // Verify post-state data is twice the pre-state data
+        EXPECT_FLOAT_EQ(post_data[i], pre_data[i] * 2.0f)
+            << "Post-state not equal to 2x pre-state at index " << i 
+            << ". Expected: " << (pre_data[i] * 2.0f) 
+            << ", Got: " << post_data[i];
     }
     
     // Verify final memcpy (Device to Host)
-    ASSERT_TRUE(op4->isMemory());
-    auto memcpy2 = static_cast<const MemoryOperation*>(op4.get());
-    EXPECT_EQ(memcpy2->kind, hipMemcpyDeviceToHost);
+    ASSERT_TRUE(op3->isMemory()) << "Final operation is not a memory operation";
+    auto memcpy2 = static_cast<const MemoryOperation*>(op3.get());
+    EXPECT_EQ(memcpy2->kind, hipMemcpyDeviceToHost) << "Final memory operation is not Device to Host";
 }
 
 int main(int argc, char **argv) {

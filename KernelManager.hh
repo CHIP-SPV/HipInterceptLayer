@@ -112,7 +112,7 @@ public:
     }
 
     void serialize(std::ofstream& file) const {
-        std::cout << "[DEBUG] Serializing argument: " << name << " (" << type << ")" << std::endl;
+        // std::cout << "[DEBUG] Serializing argument: " << name << " (" << type << ")" << std::endl;
         // Write the argument name
         uint32_t name_length = name.length();
         file.write(reinterpret_cast<const char*>(&name_length), sizeof(uint32_t));
@@ -130,7 +130,7 @@ public:
     }
 
     void deserialize(std::ifstream& file) {
-        std::cout << "[DEBUG] Deserializing argument" << std::endl;
+        // std::cout << "[DEBUG] Deserializing argument" << std::endl;
         // Read the argument name
         uint32_t name_length;
         file.read(reinterpret_cast<char*>(&name_length), sizeof(uint32_t));
@@ -147,7 +147,7 @@ public:
         file.read(reinterpret_cast<char*>(&size), sizeof(size_t));
         file.read(reinterpret_cast<char*>(&is_pointer), sizeof(bool));
         file.read(reinterpret_cast<char*>(&is_vector), sizeof(bool));
-        std::cout << "[DEBUG] Deserialized argument: " << name << " (" << type << ")" << std::endl;
+        // std::cout << "[DEBUG] Deserialized argument: " << name << " (" << type << ")" << std::endl;
     }
 };
 
@@ -430,7 +430,7 @@ public:
     }
 
     void serialize(std::ofstream& file) const {
-        std::cout << "[DEBUG] Serializing kernel: " << name << std::endl;
+        // std::cout << "[DEBUG] Serializing kernel: " << name << std::endl;
         // Write string lengths
         uint32_t kernel_source_len = kernelSource.length();
         uint32_t module_source_len = moduleSource.length();
@@ -455,11 +455,11 @@ public:
         for (const auto& arg : arguments) {
             arg.serialize(file);
         }
-        std::cout << "[DEBUG] Finished serializing kernel: " << name << std::endl;
+        // std::cout << "[DEBUG] Finished serializing kernel: " << name << std::endl;
     }
 
     static Kernel deserialize(std::ifstream& file) {
-        std::cout << "[DEBUG] Deserializing kernel" << std::endl;
+        // std::cout << "[DEBUG] Deserializing kernel" << std::endl;
         Kernel kernel;
         
         // Read string lengths
@@ -510,7 +510,7 @@ public:
             kernel.arguments.push_back(std::move(arg));
         }
         
-        std::cout << "[DEBUG] Finished deserializing kernel: " << kernel.name << std::endl;
+        // std::cout << "[DEBUG] Finished deserializing kernel: " << kernel.name << std::endl;
         return kernel;
     }
 
@@ -915,18 +915,18 @@ public:
 
     // Add direct serialization methods for use in trace file
     void serialize(std::ofstream& file) const {
-        std::cout << "[DEBUG] Serializing KernelManager with " << kernels.size() << " kernels" << std::endl;
+        // std::cout << "[DEBUG] Serializing KernelManager with " << kernels.size() << " kernels" << std::endl;
         uint32_t num_kernels = kernels.size();
         file.write(reinterpret_cast<const char*>(&num_kernels), sizeof(uint32_t));
         
         for (const auto& kernel : kernels) {
             kernel.serialize(file);
         }
-        std::cout << "[DEBUG] Finished serializing KernelManager" << std::endl;
+        // std::cout << "[DEBUG] Finished serializing KernelManager" << std::endl;
     }
 
     void deserialize(std::ifstream& file) {
-        std::cout << "[DEBUG] Deserializing KernelManager" << std::endl;
+        // std::cout << "[DEBUG] Deserializing KernelManager" << std::endl;
         uint32_t num_kernels;
         file.read(reinterpret_cast<char*>(&num_kernels), sizeof(uint32_t));
         
@@ -941,7 +941,7 @@ public:
         for (uint32_t i = 0; i < num_kernels; i++) {
             kernels.push_back(Kernel::deserialize(file));
         }
-        std::cout << "[DEBUG] Finished deserializing KernelManager with " << kernels.size() << " kernels" << std::endl;
+        // std::cout << "[DEBUG] Finished deserializing KernelManager with " << kernels.size() << " kernels" << std::endl;
     }
 
     size_t getNumKernels() const { return kernels.size(); }

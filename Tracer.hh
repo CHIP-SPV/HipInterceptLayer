@@ -337,7 +337,7 @@ class MemoryOperation : public Operation {
         src(nullptr),
         size(0),
         value(0),
-        kind(hipMemcpyHostToHost),
+        kind(hipMemcpyDefault),
         stream(nullptr) {
             pre_state = std::make_shared<MemoryState>(1);
             post_state = std::make_shared<MemoryState>(1);
@@ -364,7 +364,7 @@ class MemoryOperation : public Operation {
             pre_state = std::make_shared<MemoryState>(1);
             post_state = std::make_shared<MemoryState>(1);
         }
-
+        
     // Replace operator<< with writeToStream
     void writeToStream(std::ostream& os) const override {
         os << "MemoryOperation: " << static_cast<int>(type) << " dst: " << dst
