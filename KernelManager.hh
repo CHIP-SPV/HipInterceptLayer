@@ -43,6 +43,17 @@ public:
     size_t size;
     bool is_pointer;
     bool is_vector;
+
+private:
+    static std::string trim(const std::string& str) {
+        size_t first = str.find_first_not_of(" \t\n\r");
+        size_t last = str.find_last_not_of(" \t\n\r");
+        if (first == std::string::npos || last == std::string::npos)
+            return "";
+        return str.substr(first, last - first + 1);
+    }
+
+public:
     void operator<<(std::ostream& os) const {
         os << "Argument: " << type << " " << name << " (size: " << size << " is_pointer: " << is_pointer << " is_vector: " << is_vector << ")\n";
     }
@@ -97,6 +108,21 @@ public:
     }
 
     std::string getBaseType() const {
+        // Special handling for HIP vector types
+        if (type.find("HIP_vector_type") != std::string::npos) {
+            size_t template_start = type.find('<');
+            size_t template_end = type.find_last_of('>');
+            if (template_start != std::string::npos && template_end != std::string::npos) {
+                std::string template_params = type.substr(template_start + 1, template_end - template_start - 1);
+                // Extract the base type (first template parameter)
+                size_t comma_pos = template_params.find(',');
+                if (comma_pos != std::string::npos) {
+                    return trim(template_params.substr(0, comma_pos));
+                }
+            }
+            return type; // Return full type if parsing fails
+        }
+
         // Remove pointer and const qualifiers
         std::string base = type;
         
@@ -207,6 +233,15 @@ class Kernel {
     std::vector<Argument> arguments;
     void* host_address;
     void* device_address;
+
+    // Add trim as a private static method in Kernel class
+    static std::string trim(const std::string& str) {
+        size_t first = str.find_first_not_of(" \t\n\r");
+        size_t last = str.find_last_not_of(" \t\n\r");
+        if (first == std::string::npos || last == std::string::npos)
+            return "";
+        return str.substr(first, last - first + 1);
+    }
 
     void parseKernelSource() {
         if (moduleSource.empty() || name.empty()) {
@@ -374,89 +409,39 @@ public:
         if (args_start != std::string::npos && args_end != std::string::npos) {
             std::string args_str = signature.substr(args_start + 1, args_end - args_start - 1);
             
-            // Split arguments by comma
+            // Parse arguments considering template parameters
             size_t pos = 0;
-            size_t next_pos;
-            while ((next_pos = args_str.find(',', pos)) != std::string::npos) {
-                std::string arg = args_str.substr(pos, next_pos - pos);
+            int template_depth = 0;
+            std::string current_arg;
+            
+            for (size_t i = 0; i < args_str.length(); i++) {
+                char c = args_str[i];
                 
-                // Trim whitespace
-                arg.erase(0, arg.find_first_not_of(" "));
-                arg.erase(arg.find_last_not_of(" ") + 1);
-                
-                // Handle types with * (pointers)
-                size_t asterisk_pos = arg.find('*');
-                if (asterisk_pos != std::string::npos) {
-                    std::string type = arg.substr(0, asterisk_pos + 1);
-                    std::string name = arg.substr(asterisk_pos + 1);
-                    
-                    // Trim whitespace
-                    type.erase(0, type.find_first_not_of(" "));
-                    type.erase(type.find_last_not_of(" ") + 1);
-                    name.erase(0, name.find_first_not_of(" "));
-                    name.erase(name.find_last_not_of(" ") + 1);
-                    
-                    if (name.empty()) {
-                        name = "arg" + std::to_string(args.size() + 1);
+                if (c == '<') {
+                    template_depth++;
+                    current_arg += c;
+                } else if (c == '>') {
+                    template_depth--;
+                    current_arg += c;
+                } else if (c == ',' && template_depth == 0) {
+                    // Process complete argument
+                    if (!current_arg.empty()) {
+                        current_arg = trim(current_arg);
+                        processArgument(current_arg, args);
+                        current_arg.clear();
                     }
-                    args.emplace_back(name, type);
                 } else {
-                    // Handle non-pointer types
-                    size_t last_space = arg.find_last_of(" ");
-                    std::string type, name;
-                    
-                    if (last_space != std::string::npos) {
-                        type = arg.substr(0, last_space);
-                        name = arg.substr(last_space + 1);
-                    } else {
-                        type = arg;
-                        name = "arg" + std::to_string(args.size() + 1);
-                    }
-                    
-                    args.emplace_back(name, type);
+                    current_arg += c;
                 }
-                pos = next_pos + 1;
             }
             
-            // Handle last argument
-            std::string arg = args_str.substr(pos);
-            arg.erase(0, arg.find_first_not_of(" "));
-            arg.erase(arg.find_last_not_of(" ") + 1);
-            
-            // Handle types with * (pointers)
-            size_t asterisk_pos = arg.find('*');
-            if (asterisk_pos != std::string::npos) {
-                std::string type = arg.substr(0, asterisk_pos + 1);
-                std::string name = arg.substr(asterisk_pos + 1);
-                
-                // Trim whitespace
-                type.erase(0, type.find_first_not_of(" "));
-                type.erase(type.find_last_not_of(" ") + 1);
-                name.erase(0, name.find_first_not_of(" "));
-                name.erase(name.find_last_not_of(" ") + 1);
-                
-                if (name.empty()) {
-                    name = "arg" + std::to_string(args.size() + 1);
-                }
-                args.emplace_back(name, type);
-            } else {
-                // Handle non-pointer types
-                size_t last_space = arg.find_last_of(" ");
-                std::string type, name;
-                
-                if (last_space != std::string::npos) {
-                    type = arg.substr(0, last_space);
-                    name = arg.substr(last_space + 1);
-                } else {
-                    type = arg;
-                    name = "arg" + std::to_string(args.size() + 1);
-                }
-                
-                args.emplace_back(name, type);
+            // Process the last argument
+            if (!current_arg.empty()) {
+                current_arg = trim(current_arg);
+                processArgument(current_arg, args);
             }
         }
 
-        
         return {kernel_name, args};
     }
 
@@ -562,6 +547,34 @@ public:
         return kernel;
     }
 
+    void processArgument(const std::string& arg, std::vector<Argument>& args) const {
+        // Find the last space that's not inside template brackets
+        int template_depth = 0;
+        size_t last_space = std::string::npos;
+        
+        for (size_t i = 0; i < arg.length(); i++) {
+            if (arg[i] == '<') template_depth++;
+            else if (arg[i] == '>') template_depth--;
+            else if (arg[i] == ' ' && template_depth == 0) last_space = i;
+        }
+
+        std::string type, name;
+        if (last_space != std::string::npos) {
+            type = trim(arg.substr(0, last_space));
+            name = trim(arg.substr(last_space + 1));
+        } else {
+            type = arg;
+            name = "arg" + std::to_string(args.size() + 1);
+        }
+
+        // Handle pointer types
+        if (name.find('*') != std::string::npos) {
+            type += '*';
+            name.erase(std::remove(name.begin(), name.end(), '*'), name.end());
+        }
+
+        args.emplace_back(name, type);
+    }
 
 };
 

@@ -235,7 +235,8 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
               
     // Get kernel name and print args using Tracer
     auto kernel = Tracer::instance().getKernelManager().getKernelByPointer(function_address);
-    std::cout << "Kernel name: " << kernel.getName() << std::endl;
+    std::cout << kernel.getName() << " " << kernel.getSignature() << std::endl;
+    
     
     // Create execution record
     KernelExecution exec;

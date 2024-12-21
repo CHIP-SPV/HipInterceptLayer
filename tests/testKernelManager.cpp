@@ -81,7 +81,7 @@ TEST_F(KernelManagerTest, TraceFileTest) {
     const KernelManager& traced_manager = tracer.getKernelManager();
     
     // Verify we have the expected kernels
-    ASSERT_EQ(traced_manager.getNumKernels(), 4);
+    ASSERT_EQ(traced_manager.getNumKernels(), 5);
     
     // Verify vectorAdd kernel
     Kernel vector = traced_manager.getKernelByName("vectorAdd");
@@ -331,6 +331,62 @@ TEST_F(KernelManagerTest, VectorArgumentHandling) {
     EXPECT_EQ(deserialized_args[0].getType(), "float4*");
     EXPECT_EQ(deserialized_args[0].getVectorSize(), 4);
     EXPECT_EQ(deserialized_args[0].getBaseType(), "float4");
+
+    // Clean up
+    std::remove(temp_filename.c_str());
+}
+
+TEST_F(KernelManagerTest, HIPVectorTypeHandling) {
+    // Test source with HIP vector type
+    const std::string hip_vector_source = R"(
+        __global__ void vectorKernel(HIP_vector_type<float, 4u>* vec) {
+            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            vec[idx].x = 1.0f;
+        }
+    )";
+
+    KernelManager hip_manager;
+    hip_manager.addFromModuleSource(hip_vector_source);
+
+    // Get the vectorKernel
+    Kernel vector_kernel = hip_manager.getKernelByName("vectorKernel");
+    auto args = vector_kernel.getArguments();
+    
+    // Verify argument properties
+    ASSERT_EQ(args.size(), 1);
+    
+    // Check HIP_vector_type argument
+    EXPECT_TRUE(args[0].isPointer());
+    EXPECT_TRUE(args[0].isVector());
+    EXPECT_EQ(args[0].getType(), "HIP_vector_type<float, 4u>*");
+    EXPECT_EQ(args[0].getVectorSize(), 4);
+    EXPECT_EQ(args[0].getBaseType(), "float");
+
+    // Test serialization of HIP vector type
+    std::string temp_filename = "hip_vector_test.bin";
+    {
+        std::ofstream outfile(temp_filename, std::ios::binary);
+        ASSERT_TRUE(outfile.is_open());
+        hip_manager.serialize(outfile);
+    }
+
+    // Deserialize and verify vector properties are preserved
+    KernelManager new_manager;
+    {
+        std::ifstream infile(temp_filename, std::ios::binary);
+        ASSERT_TRUE(infile.is_open());
+        new_manager.deserialize(infile);
+    }
+
+    Kernel deserialized_kernel = new_manager.getKernelByName("vectorKernel");
+    auto deserialized_args = deserialized_kernel.getArguments();
+    
+    // Verify vector properties after deserialization
+    EXPECT_TRUE(deserialized_args[0].isPointer());
+    EXPECT_TRUE(deserialized_args[0].isVector());
+    EXPECT_EQ(deserialized_args[0].getType(), "HIP_vector_type<float, 4u>*");
+    EXPECT_EQ(deserialized_args[0].getVectorSize(), 4);
+    EXPECT_EQ(deserialized_args[0].getBaseType(), "float");
 
     // Clean up
     std::remove(temp_filename.c_str());

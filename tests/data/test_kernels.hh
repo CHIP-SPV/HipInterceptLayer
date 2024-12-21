@@ -29,6 +29,16 @@ __global__ void simpleKernelWithN(float* __restrict__ data, int n) {
     }
 }
 
+__global__ void vectorKernel(float4* data) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    data[idx] = make_float4(
+        data[idx].x * 2.0f,
+        data[idx].y * 2.0f,
+        data[idx].z * 2.0f,
+        data[idx].w * 2.0f
+    );
+}
+
 // String versions of kernels for testing code generation
 namespace kernel_strings {
 
@@ -96,6 +106,15 @@ inline void simpleKernel_cpu(std::vector<float>& data, int n) {
 inline void simpleKernelWithN_cpu(std::vector<float>& data, int n) {
     for (int i = 0; i < n; i++) {
         data[i] *= 2.0f;
+    }
+}
+
+inline void vectorKernel_cpu(std::vector<float4>& data, int N) {
+    for (int i = 0; i < N; i++) {
+        data[i].x *= 2.0f;
+        data[i].y *= 2.0f;
+        data[i].z *= 2.0f;
+        data[i].w *= 2.0f;
     }
 }
 
