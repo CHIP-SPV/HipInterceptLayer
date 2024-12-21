@@ -126,7 +126,7 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
     Tracer tracer(trace_file);
     std::cout << tracer;
     
-    ASSERT_EQ(tracer.getNumOperations(), 4) << "Expected 4 operations in trace";
+    ASSERT_EQ(tracer.getNumOperations(), 8) << "Expected 8 operations in trace";
     
     // Get operations
     auto op0 = tracer.getOperation(0); //malloc
@@ -202,33 +202,32 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
 }
 
 TEST_F(ComparatorTest, VerifyVectorStateCapture) {
-    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/data_verification-1.trace";
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/data_verification-0.trace";
     
     // Load the trace
     Tracer tracer(trace_file);
     std::cout << tracer;
     
-    // Update expected operations
-    ASSERT_EQ(tracer.getNumOperations(), 4) << "Expected 4 operations in trace";
+    // Update expected operations - now we have 8 operations total
+    ASSERT_EQ(tracer.getNumOperations(), 8) << "Expected 8 operations in trace";
     
     // Get operations for vector part (second half of operations)
-    auto op0 = tracer.getOperation(0); // malloc
-    auto op1 = tracer.getOperation(1); // memcpy H2D
-    auto op2 = tracer.getOperation(2); // kernel
-    auto op3 = tracer.getOperation(3); // memcpy D2H
+    auto op4 = tracer.getOperation(4); // malloc for vector
+    auto op5 = tracer.getOperation(5); // memcpy H2D for vector
+    auto op6 = tracer.getOperation(6); // vector kernel
+    auto op7 = tracer.getOperation(7); // memcpy D2H for vector
     
     // Verify kernel execution
-    ASSERT_TRUE(op2->isKernel()) << "Operation 2 is not a kernel";
-    auto kernel = static_cast<const KernelExecution*>(op2.get());
+    ASSERT_TRUE(op6->isKernel()) << "Operation 6 is not a kernel";
+    auto kernel = static_cast<const KernelExecution*>(op6.get());
     
-    // Verify kernel's pre and post states
+    // Rest of the vector verification remains the same
     ASSERT_TRUE(kernel->pre_state != nullptr) << "Pre-state is null";
     ASSERT_TRUE(kernel->post_state != nullptr) << "Post-state is null";
     
     EXPECT_EQ(kernel->pre_state->size, 256 * sizeof(float4));
     EXPECT_EQ(kernel->post_state->size, 256 * sizeof(float4));
     
-    // Verify the data in pre_state matches input pattern
     float4* pre_data = reinterpret_cast<float4*>(kernel->pre_state->data.get());
     float4* post_data = reinterpret_cast<float4*>(kernel->post_state->data.get());
     
