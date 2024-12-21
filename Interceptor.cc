@@ -259,9 +259,10 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
         
         std::cout << "DEBUG: Processing arg " << i 
                   << "\n  Type: " << arg.getType()
-                  << "\n  Is pointer: " << arg.isPointer() << std::endl;
+                  << "\n  Is pointer: " << arg.isPointer() 
+                  << "\n  Is vector: " << arg.isVector() << std::endl;
         
-        if (arg.isPointer() && !arg.isVector()) {
+        if (arg.isPointer()) {
             void* device_ptr = *(void**)param_value;
             exec.arg_ptrs.push_back(device_ptr);
             
@@ -276,12 +277,17 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
                           
                 createShadowCopy(base_ptr, *info);
                 exec.pre_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
-            } else {
-                std::cerr << "WARNING: Could not find allocation for arg " << i
-                          << " ptr: " << device_ptr << std::endl;
             }
+        } else if (arg.isVector()) {
+            // For vector arguments, create a memory state with the vector size
+            exec.arg_ptrs.push_back(param_value);
+            size_t vector_size = arg.getVectorSize() * sizeof(float); // Assuming float4/float3/float2
+            exec.pre_state = std::make_shared<MemoryState>(reinterpret_cast<const char*>(param_value), vector_size);
+            exec.arg_sizes.push_back(vector_size);
+            
+            std::cout << "DEBUG: Vector argument size: " << vector_size << std::endl;
         } else {
-            // For scalar arguments, create a memory state with the value
+            // For scalar arguments
             exec.arg_ptrs.push_back(param_value);
             size_t arg_size = arg.getSize();
             exec.pre_state = std::make_shared<MemoryState>(reinterpret_cast<const char*>(param_value), arg_size);
@@ -299,17 +305,26 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     
     for (size_t i = 0; i < exec.arg_ptrs.size(); i++) {
         void* device_ptr = exec.arg_ptrs[i];
-        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
-        if (base_ptr && info) {
-            std::cout << "DEBUG: Creating post-exec shadow copy for arg " << i
-                      << "\n  Base ptr: " << base_ptr
-                      << "\n  Size: " << info->size << std::endl;
-                      
-            createShadowCopy(base_ptr, *info);
-            exec.post_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
+        const auto& arg = arguments[i];
+        
+        if (arg.isPointer()) {
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "DEBUG: Creating post-exec shadow copy for arg " << i
+                          << "\n  Base ptr: " << base_ptr
+                          << "\n  Size: " << info->size << std::endl;
+                          
+                createShadowCopy(base_ptr, *info);
+                exec.post_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
+            }
+        } else if (arg.isVector()) {
+            // For vector arguments, capture final state with vector size
+            size_t vector_size = arg.getVectorSize() * sizeof(float);
+            exec.post_state = std::make_shared<MemoryState>(reinterpret_cast<const char*>(device_ptr), vector_size);
         } else {
-            std::cerr << "WARNING: Could not find allocation for post-state arg " << i
-                      << " ptr: " << device_ptr << std::endl;
+            // For scalar arguments
+            size_t arg_size = arg.getSize();
+            exec.post_state = std::make_shared<MemoryState>(reinterpret_cast<const char*>(device_ptr), arg_size);
         }
     }
     
