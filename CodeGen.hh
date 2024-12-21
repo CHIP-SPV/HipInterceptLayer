@@ -184,13 +184,11 @@ private:
          << "}\n\n";
     }
 
-    // Add helper function to load trace data
-    ss << "bool loadTraceData(const char* filename, size_t offset, size_t "
-          "size, void* dest) {\n"
+    // Add helper function
+    ss << "bool loadTraceData(const char* filename, size_t offset, size_t size, void* dest) {\n"
        << "    std::ifstream file(filename, std::ios::binary);\n"
        << "    if (!file.is_open()) {\n"
-       << "        std::cerr << \"Failed to open trace file: \" << filename "
-          "<< std::endl;\n"
+       << "        std::cerr << \"Failed to open trace file: \" << filename << std::endl;\n"
        << "        return false;\n"
        << "    }\n"
        << "    file.seekg(offset);\n"
@@ -220,10 +218,8 @@ private:
       }
 
       if (arg.isPointer()) {
-        ss << "    " << arg.getBaseType() << "* " << var_name
-           << "_h = nullptr;\n";
-        ss << "    " << arg.getBaseType() << "* " << var_name
-           << "_d = nullptr;\n";
+        ss << "    " << arg.getBaseType() << "* " << var_name << "_h = nullptr;\n";
+        ss << "    " << arg.getBaseType() << "* " << var_name << "_d = nullptr;\n";
         declared_vars_.insert(var_name + "_h");
         declared_vars_.insert(var_name + "_d");
       } else {
@@ -258,7 +254,6 @@ private:
         std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
 
         if (arg.isPointer() && i < op->pre_state->size) {
-            // Get the actual size from the shadow copy
             size_t size = op->pre_state->size;
             
             ss << "    // Allocate and initialize " << var_name << "\n";
@@ -268,11 +263,12 @@ private:
             
             ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << size << "));\n";
 
-            // Load data from trace file
+            // Just cast away const when loading
             ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
-               << size << ", " << var_name << "_h)) { return 1; }\n";
+               << size << ", (void*)" << var_name << "_h)) { return 1; }\n";
 
-            ss << "    CHECK_HIP(hipMemcpy(" << var_name << "_d, " << var_name << "_h, "
+            // Cast to void* for hipMemcpy
+            ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
                << size << ", hipMemcpyHostToDevice));\n\n";
 
             current_offset += size;
@@ -313,7 +309,7 @@ private:
     ss << "    CHECK_HIP(hipDeviceSynchronize());\n"
        << "    CHECK_HIP(hipGetLastError());\n\n";
     
-    // Add verification code for pointer arguments
+    // Modify verification code for pointer arguments
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
         if (arg.isPointer() && i < op->pre_state->size) {
@@ -321,7 +317,7 @@ private:
             size_t size = op->pre_state->size;
             
             ss << "    // Copy back and verify " << var_name << "\n"
-               << "    CHECK_HIP(hipMemcpy(" << var_name << "_h, " << var_name << "_d, "
+               << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_h, (const void*)" << var_name << "_d, "
                << size << ", hipMemcpyDeviceToHost));\n"
                << "    std::cout << \"Hash for " << var_name << ": \" << "
                << "calculateHash(" << var_name << "_h, " << size << ") << std::endl;\n\n";
@@ -332,11 +328,11 @@ private:
   void generateCleanup(std::stringstream &ss) {
     ss << "\n    // Cleanup\n";
     for (const auto &var : declared_vars_) {
-      if (var.find("_d") != std::string::npos) {
-        ss << "    if (" << var << ") hipFree(" << var << ");\n";
-      } else if (var.find("_h") != std::string::npos) {
-        ss << "    if (" << var << ") free(" << var << ");\n";
-      }
+        if (var.find("_d") != std::string::npos) {
+            ss << "    if (" << var << ") hipFree((void*)" << var << ");\n";
+        } else if (var.find("_h") != std::string::npos) {
+            ss << "    if (" << var << ") free((void*)" << var << ");\n";
+        }
     }
 
     ss << "\n    return 0;\n"

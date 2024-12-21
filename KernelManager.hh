@@ -97,7 +97,7 @@ public:
     }
 
     std::string getBaseType() const {
-        // Remove pointer and vector suffixes to get base type
+        // Remove pointer and const qualifiers
         std::string base = type;
         
         // Remove pointer
@@ -106,16 +106,35 @@ public:
             base = base.substr(0, ptr_pos);
         }
         
-        // Remove vector size (2,3,4)
-        static const std::vector<std::string> vector_suffixes = {"2", "3", "4"};
-        for (const auto& suffix : vector_suffixes) {
-            size_t pos = base.find(suffix);
+        // Remove const and restrict qualifiers
+        static const std::vector<std::string> qualifiers = {"const", "restrict", "__restrict__"};
+        for (const auto& qualifier : qualifiers) {
+            size_t pos = base.find(qualifier);
             if (pos != std::string::npos) {
-                base = base.substr(0, pos);
-                break;
+                base.erase(pos, qualifier.length());
             }
         }
         
+        // Trim whitespace
+        base.erase(0, base.find_first_not_of(" "));
+        base.erase(base.find_last_not_of(" ") + 1);
+        
+        // Keep vector types intact (don't strip the number)
+        static const std::vector<std::string> vector_types = {
+            "real4", "real3", "real2",
+            "float4", "float3", "float2",
+            "int4", "int3", "int2",
+            "uint4", "uint3", "uint2",
+            "double4", "double3", "double2"
+        };
+        
+        for (const auto& vtype : vector_types) {
+            if (base.find(vtype) != std::string::npos) {
+                return vtype;
+            }
+        }
+        
+        // For non-vector types, return the base type
         return base;
     }
 

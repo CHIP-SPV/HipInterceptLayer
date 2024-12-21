@@ -292,7 +292,7 @@ TEST_F(KernelManagerTest, VectorArgumentHandling) {
     EXPECT_TRUE(args[0].isVector());
     EXPECT_EQ(args[0].getType(), "float4*");
     EXPECT_EQ(args[0].getVectorSize(), 4);
-    EXPECT_EQ(args[0].getBaseType(), "float");
+    EXPECT_EQ(args[0].getBaseType(), "float4");
     
     // Check double* argument (non-vector)
     EXPECT_TRUE(args[1].isPointer());
@@ -330,7 +330,7 @@ TEST_F(KernelManagerTest, VectorArgumentHandling) {
     EXPECT_TRUE(deserialized_args[0].isVector());
     EXPECT_EQ(deserialized_args[0].getType(), "float4*");
     EXPECT_EQ(deserialized_args[0].getVectorSize(), 4);
-    EXPECT_EQ(deserialized_args[0].getBaseType(), "float");
+    EXPECT_EQ(deserialized_args[0].getBaseType(), "float4");
 
     // Clean up
     std::remove(temp_filename.c_str());
