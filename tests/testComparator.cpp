@@ -126,13 +126,14 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
     Tracer tracer(trace_file);
     std::cout << tracer;
     
-    ASSERT_EQ(tracer.getNumOperations(), 4);
+    ASSERT_EQ(tracer.getNumOperations(), 8) << "Expected 8 operations in trace";
     
     // Get operations
     auto op0 = tracer.getOperation(0); //malloc
     auto op1 = tracer.getOperation(1); //memcpy
     auto op2 = tracer.getOperation(2); //kernel
     auto op3 = tracer.getOperation(3); //memcpy
+    // Operations 4-7 are for the vector kernel test
     
     // Debug output for operation types
     std::cout << "Operation 1 type: " << (op1->isMemory() ? "Memory" : "Kernel") << std::endl;
@@ -199,6 +200,60 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
     ASSERT_TRUE(op3->isMemory()) << "Final operation is not a memory operation";
     auto memcpy2 = static_cast<const MemoryOperation*>(op3.get());
     EXPECT_EQ(memcpy2->kind, hipMemcpyDeviceToHost) << "Final memory operation is not Device to Host";
+}
+
+TEST_F(ComparatorTest, VerifyVectorStateCapture) {
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/data_verification-1.trace";
+    
+    // Load the trace
+    Tracer tracer(trace_file);
+    std::cout << tracer;
+    
+    // Update expected operations
+    ASSERT_EQ(tracer.getNumOperations(), 8) << "Expected 8 operations in trace";
+    
+    // Get operations for vector part (second half of operations)
+    auto op4 = tracer.getOperation(4); // malloc
+    auto op5 = tracer.getOperation(5); // memcpy H2D
+    auto op6 = tracer.getOperation(6); // kernel
+    auto op7 = tracer.getOperation(7); // memcpy D2H
+    
+    // Verify kernel execution
+    ASSERT_TRUE(op6->isKernel()) << "Operation 6 is not a kernel";
+    auto kernel = static_cast<const KernelExecution*>(op6.get());
+    
+    // Verify kernel's pre and post states
+    ASSERT_TRUE(kernel->pre_state != nullptr) << "Pre-state is null";
+    ASSERT_TRUE(kernel->post_state != nullptr) << "Post-state is null";
+    
+    EXPECT_EQ(kernel->pre_state->size, 256 * sizeof(float4));
+    EXPECT_EQ(kernel->post_state->size, 256 * sizeof(float4));
+    
+    // Verify the data in pre_state matches input pattern
+    float4* pre_data = reinterpret_cast<float4*>(kernel->pre_state->data.get());
+    float4* post_data = reinterpret_cast<float4*>(kernel->post_state->data.get());
+    
+    // Print first few values for debugging
+    std::cout << "First few pre-state vector values: ";
+    for (int i = 0; i < 2; i++) {
+        std::cout << "(" << pre_data[i].x << "," << pre_data[i].y << ","
+                 << pre_data[i].z << "," << pre_data[i].w << ") ";
+    }
+    std::cout << std::endl;
+    
+    for (int i = 0; i < 256; i++) {
+        // Verify pre-state data
+        EXPECT_FLOAT_EQ(pre_data[i].x, 1.0f + (i * 4));
+        EXPECT_FLOAT_EQ(pre_data[i].y, 1.0f + (i * 4) + 1);
+        EXPECT_FLOAT_EQ(pre_data[i].z, 1.0f + (i * 4) + 2);
+        EXPECT_FLOAT_EQ(pre_data[i].w, 1.0f + (i * 4) + 3);
+        
+        // Verify post-state data is twice the pre-state data
+        EXPECT_FLOAT_EQ(post_data[i].x, pre_data[i].x * 2.0f);
+        EXPECT_FLOAT_EQ(post_data[i].y, pre_data[i].y * 2.0f);
+        EXPECT_FLOAT_EQ(post_data[i].z, pre_data[i].z * 2.0f);
+        EXPECT_FLOAT_EQ(post_data[i].w, pre_data[i].w * 2.0f);
+    }
 }
 
 int main(int argc, char **argv) {
