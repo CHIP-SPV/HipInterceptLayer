@@ -2,7 +2,7 @@
 #include "CodeGen.hh"
 #include "KernelManager.hh"
 #include "Tracer.hh"
-#include "data/Kernels.hh"
+#include "data/test_kernels.hh"
 #include <fstream>
 
 // Helper function to save and print generated code

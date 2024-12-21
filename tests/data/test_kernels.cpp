@@ -1,4 +1,4 @@
-#include "Kernels.hh"
+#include "test_kernels.hh"
 #include <hip/hip_runtime.h>
 #include <iostream>
 #include <vector>

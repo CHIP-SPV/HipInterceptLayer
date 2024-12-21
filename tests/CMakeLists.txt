@@ -17,7 +17,7 @@ target_compile_definitions(unit_tests PRIVATE
 )
 
 # Compile test kernels
-add_executable(test_kernels data/Kernels.cpp)
+add_executable(test_kernels data/test_kernels.cpp)
 
 # Add compiler flags to preserve symbols
 target_compile_options(test_kernels PRIVATE -g)
@@ -27,6 +27,12 @@ set_target_properties(test_kernels PROPERTIES
     LINK_FLAGS "-Wl,--export-dynamic")
 
 target_link_libraries(test_kernels
+  PRIVATE
+  hip::device)
+
+add_executable(data_verification data/data_verification.cpp)
+
+target_link_libraries(data_verification
   PRIVATE
   hip::device)
 
@@ -46,6 +52,14 @@ add_custom_target(run_test_kernels
     COMMENT "Running test_kernels with HIPIntercept preloaded"
 )
 
+add_custom_target(run_data_verification
+    COMMAND ${CMAKE_COMMAND} -E remove -f data_verification-0.trace
+    COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:data_verification>
+    DEPENDS data_verification HIPIntercept
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running data_verification with HIPIntercept preloaded"
+)
+
 # Make test_kernels.trace available for unit tests
 add_dependencies(unit_tests run_test_kernels)
 
@@ -53,6 +67,6 @@ add_dependencies(unit_tests run_test_kernels)
 add_custom_target(all_tests ALL DEPENDS run_test_kernels)
 
 # Make sure the trace file exists before running tests
-add_dependencies(unit_tests run_test_kernels)
+add_dependencies(unit_tests run_test_kernels run_data_verification)
 
 gtest_discover_tests(unit_tests)

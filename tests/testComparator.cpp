@@ -119,6 +119,61 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
     EXPECT_NE(result.find("hipMemcpyAsync call"), std::string::npos);
 }
 
+TEST_F(ComparatorTest, VerifyStateCapture) {
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/data_verification-0.trace";
+    
+    // Load the trace
+    Tracer tracer(trace_file);
+    
+    // We expect 3 operations in order:
+    // 0. hipMalloc
+    // 1. hipMemcpy (Host to Device)
+    // 2. Kernel execution (simpleKernel)
+    // 3. hipMemcpy (Device to Host)
+    ASSERT_EQ(tracer.getNumOperations(), 4);
+    
+    // Get operations
+    auto op1 = tracer.getOperation(0);
+    auto op2 = tracer.getOperation(1);
+    auto op3 = tracer.getOperation(2);
+    auto op4 = tracer.getOperation(3);
+    
+    // Verify first memcpy (Host to Device)
+    ASSERT_TRUE(op1->isMemory());
+    auto memcpy1 = static_cast<const MemoryOperation*>(op1.get());
+    EXPECT_EQ(memcpy1->kind, hipMemcpyHostToDevice);
+    
+    // Verify kernel execution
+    ASSERT_TRUE(op2->isKernel());
+    auto kernel = static_cast<const KernelExecution*>(op2.get());
+    EXPECT_EQ(kernel->kernel_name, "simpleKernel");
+    
+    // Verify kernel's pre and post states
+    ASSERT_TRUE(kernel->pre_state != nullptr);
+    ASSERT_TRUE(kernel->post_state != nullptr);
+    EXPECT_EQ(kernel->pre_state->size, 1024 * sizeof(float));
+    EXPECT_EQ(kernel->post_state->size, 1024 * sizeof(float));
+    
+    // Verify the data in pre_state matches input pattern
+    float* pre_data = reinterpret_cast<float*>(kernel->pre_state->data.get());
+    for (int i = 0; i < 1024; i++) {
+        EXPECT_FLOAT_EQ(pre_data[i], 1.0f + i) 
+            << "Pre-state mismatch at index " << i;
+    }
+    
+    // Verify the data in post_state matches expected output
+    float* post_data = reinterpret_cast<float*>(kernel->post_state->data.get());
+    for (int i = 0; i < 1024; i++) {
+        EXPECT_FLOAT_EQ(post_data[i], (1.0f + i) * 2.0f) 
+            << "Post-state mismatch at index " << i;
+    }
+    
+    // Verify final memcpy (Device to Host)
+    ASSERT_TRUE(op4->isMemory());
+    auto memcpy2 = static_cast<const MemoryOperation*>(op4.get());
+    EXPECT_EQ(memcpy2->kind, hipMemcpyDeviceToHost);
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
