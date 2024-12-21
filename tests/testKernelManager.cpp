@@ -276,3 +276,62 @@ TEST_F(KernelManagerTest, SerializationConsistency) {
     std::remove(temp_file1.c_str());
     std::remove(temp_file2.c_str());
 }
+
+TEST_F(KernelManagerTest, VectorArgumentHandling) {
+    manager.addFromModuleSource(test_source);
+
+    // Get the complexKernel which uses float4 vectors
+    Kernel complex = manager.getKernelByName("complexKernel");
+    auto args = complex.getArguments();
+    
+    // Verify vector argument properties
+    ASSERT_EQ(args.size(), 3);
+    
+    // Check float4* argument
+    EXPECT_TRUE(args[0].isPointer());
+    EXPECT_TRUE(args[0].isVector());
+    EXPECT_EQ(args[0].getType(), "float4*");
+    EXPECT_EQ(args[0].getVectorSize(), 4);
+    EXPECT_EQ(args[0].getBaseType(), "float");
+    
+    // Check double* argument (non-vector)
+    EXPECT_TRUE(args[1].isPointer());
+    EXPECT_FALSE(args[1].isVector());
+    EXPECT_EQ(args[1].getType(), "double*");
+    EXPECT_EQ(args[1].getVectorSize(), 1);
+    
+    // Check int argument
+    EXPECT_FALSE(args[2].isPointer());
+    EXPECT_FALSE(args[2].isVector());
+    EXPECT_EQ(args[2].getType(), "int");
+    EXPECT_EQ(args[2].getVectorSize(), 1);
+
+    // Test serialization of vector arguments
+    std::string temp_filename = "vector_test.bin";
+    {
+        std::ofstream outfile(temp_filename, std::ios::binary);
+        ASSERT_TRUE(outfile.is_open());
+        manager.serialize(outfile);
+    }
+
+    // Deserialize and verify vector properties are preserved
+    KernelManager new_manager;
+    {
+        std::ifstream infile(temp_filename, std::ios::binary);
+        ASSERT_TRUE(infile.is_open());
+        new_manager.deserialize(infile);
+    }
+
+    Kernel deserialized_kernel = new_manager.getKernelByName("complexKernel");
+    auto deserialized_args = deserialized_kernel.getArguments();
+    
+    // Verify vector properties after deserialization
+    EXPECT_TRUE(deserialized_args[0].isPointer());
+    EXPECT_TRUE(deserialized_args[0].isVector());
+    EXPECT_EQ(deserialized_args[0].getType(), "float4*");
+    EXPECT_EQ(deserialized_args[0].getVectorSize(), 4);
+    EXPECT_EQ(deserialized_args[0].getBaseType(), "float");
+
+    // Clean up
+    std::remove(temp_filename.c_str());
+}

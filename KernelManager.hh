@@ -97,18 +97,47 @@ public:
     }
 
     std::string getBaseType() const {
-        // Remove __restrict__ and similar qualifiers
-        std::string base_type = type;
-        std::regex qualifiers(R"(\s*(?:const|__restrict__|__restrict|__global__|__device__|__host__|__constant__|__shared__|__managed__|__pinned__|__constant__|__shared__|__managed__|__pinned__))");
-        base_type = std::regex_replace(base_type, qualifiers, "");
-        // Remove any trailing spaces
-        base_type = std::regex_replace(base_type, std::regex("\\s+$"), "");
-        // Remove any leading spaces
-        base_type = std::regex_replace(base_type, std::regex("^\\s+"), "");
+        // Remove pointer and vector suffixes to get base type
+        std::string base = type;
+        
+        // Remove pointer
+        size_t ptr_pos = base.find('*');
+        if (ptr_pos != std::string::npos) {
+            base = base.substr(0, ptr_pos);
+        }
+        
+        // Remove vector size (2,3,4)
+        static const std::vector<std::string> vector_suffixes = {"2", "3", "4"};
+        for (const auto& suffix : vector_suffixes) {
+            size_t pos = base.find(suffix);
+            if (pos != std::string::npos) {
+                base = base.substr(0, pos);
+                break;
+            }
+        }
+        
+        return base;
+    }
 
-        // Also strip *
-        base_type = std::regex_replace(base_type, std::regex("\\*"), "");
-        return base_type;
+    size_t getVectorSize() const {
+        // Check for vector types (float2, float3, float4, etc.)
+        std::string base = type;
+        
+        // Remove pointer if present
+        size_t ptr_pos = base.find('*');
+        if (ptr_pos != std::string::npos) {
+            base = base.substr(0, ptr_pos);
+        }
+        
+        // Look for vector suffix
+        static const std::vector<std::string> vector_suffixes = {"2", "3", "4"};
+        for (const auto& suffix : vector_suffixes) {
+            if (base.find(suffix) != std::string::npos) {
+                return std::stoi(suffix);
+            }
+        }
+        
+        return 1; // Not a vector type
     }
 
     void serialize(std::ofstream& file) const {
