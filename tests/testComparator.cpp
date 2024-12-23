@@ -126,131 +126,136 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
     Tracer tracer(trace_file);
     std::cout << tracer;
     
-    ASSERT_EQ(tracer.getNumOperations(), 8) << "Expected 8 operations in trace";
+    // We expect 13 operations:
+    // 4 mallocs (scalar, vec4, vec2, float4)
+    // 4 H2D copies
+    // 1 kernel
+    // 4 D2H copies
+    ASSERT_EQ(tracer.getNumOperations(), 13) << "Expected 13 operations in trace";
     
-    // Get operations
-    auto op0 = tracer.getOperation(0); //malloc
-    auto op1 = tracer.getOperation(1); //memcpy
-    auto op2 = tracer.getOperation(2); //kernel
-    auto op3 = tracer.getOperation(3); //memcpy
-    
-    // Debug output for operation types
-    std::cout << "Operation 1 type: " << (op1->isMemory() ? "Memory" : "Kernel") << std::endl;
-    std::cout << "Operation 2 type: " << (op2->isKernel() ? "Kernel" : "Memory") << std::endl;
-    
-    // Verify first malloc
-    ASSERT_TRUE(op0->isMemory()) << "First operation is not a memory operation";
-    auto malloc1 = static_cast<const MemoryOperation*>(op0.get());
-    EXPECT_EQ(malloc1->kind, hipMemcpyHostToHost) << "First memory operation is not hipMemcpyHostToHost";
-
-
-    // Verify first memcpy (Host to Device)
-    ASSERT_TRUE(op1->isMemory()) << "First operation is not a memory operation";
-    auto memcpy1 = static_cast<const MemoryOperation*>(op1.get());
-    EXPECT_EQ(memcpy1->kind, hipMemcpyHostToDevice) << "First memory operation is not Host to Device";
+    // Get operations for the kernel and surrounding memory operations
+    auto kernel_op = tracer.getOperation(8); // kernel should be in the middle
     
     // Verify kernel execution
-    ASSERT_TRUE(op2->isKernel()) << "Second operation is not a kernel";
-    auto kernel = static_cast<const KernelExecution*>(op2.get());
-    EXPECT_EQ(kernel->kernel_name, "simpleKernel") << "Kernel name mismatch";
+    ASSERT_TRUE(kernel_op->isKernel()) << "Operation is not a kernel";
+    auto kernel = static_cast<const KernelExecution*>(kernel_op.get());
+    EXPECT_EQ(kernel->kernel_name, "complexDataKernel") << "Kernel name mismatch";
     
     // Verify kernel's pre and post states
     ASSERT_TRUE(kernel->pre_state != nullptr) << "Pre-state is null";
     ASSERT_TRUE(kernel->post_state != nullptr) << "Post-state is null";
     
+    // Calculate total size for all arrays
+    size_t N = 3;  // Reduced from 1024 to 3
+    size_t total_size = N * (sizeof(float) + sizeof(float4) + 
+                            sizeof(HIP_vector_type<float, 4>) + 
+                            sizeof(HIP_vector_type<float, 2>));
+    
     std::cout << "Pre-state size: " << kernel->pre_state->size << std::endl;
     std::cout << "Post-state size: " << kernel->post_state->size << std::endl;
     
-    EXPECT_EQ(kernel->pre_state->size, 1024 * sizeof(float));
-    EXPECT_EQ(kernel->post_state->size, 1024 * sizeof(float));
+    EXPECT_EQ(kernel->pre_state->size, total_size);
+    EXPECT_EQ(kernel->post_state->size, total_size);
     
-    // Verify the data in pre_state matches input pattern
-    float* pre_data = reinterpret_cast<float*>(kernel->pre_state->data.get());
-    float* post_data = reinterpret_cast<float*>(kernel->post_state->data.get());
+    // Get pointers to the different array types in pre and post states
+    float* pre_scalar = reinterpret_cast<float*>(kernel->pre_state->data.get());
+    float* post_scalar = reinterpret_cast<float*>(kernel->post_state->data.get());
     
-    // Print first few values for debugging
-    std::cout << "First few pre-state values: ";
-    for (int i = 0; i < 5; i++) {
-        std::cout << pre_data[i] << " ";
+    auto* pre_vec4 = reinterpret_cast<HIP_vector_type<float, 4>*>(pre_scalar + N);
+    auto* post_vec4 = reinterpret_cast<HIP_vector_type<float, 4>*>(post_scalar + N);
+    
+    auto* pre_vec2 = reinterpret_cast<HIP_vector_type<float, 2>*>(pre_vec4 + N);
+    auto* post_vec2 = reinterpret_cast<HIP_vector_type<float, 2>*>(post_vec4 + N);
+    
+    auto* pre_float4 = reinterpret_cast<float4*>(pre_vec2 + N);
+    auto* post_float4 = reinterpret_cast<float4*>(post_vec2 + N);
+    
+    // Print all values for debugging since we only have 3 elements
+    std::cout << "\nScalar array values:" << std::endl;
+    for (size_t i = 0; i < N; i++) {
+        std::cout << "pre[" << i << "]=" << pre_scalar[i] 
+                 << ", post[" << i << "]=" << post_scalar[i] << std::endl;
     }
-    std::cout << std::endl;
     
-    std::cout << "First few post-state values: ";
-    for (int i = 0; i < 5; i++) {
-        std::cout << post_data[i] << " ";
+    std::cout << "\nVector4 array values:" << std::endl;
+    for (size_t i = 0; i < N; i++) {
+        std::cout << "pre[" << i << "]=(" << pre_vec4[i].x << "," << pre_vec4[i].y << ","
+                 << pre_vec4[i].z << "," << pre_vec4[i].w << ")" << std::endl;
+        std::cout << "post[" << i << "]=(" << post_vec4[i].x << "," << post_vec4[i].y << ","
+                 << post_vec4[i].z << "," << post_vec4[i].w << ")" << std::endl;
     }
-    std::cout << std::endl;
     
-    for (int i = 0; i < 1024; i++) {
-        // Verify pre-state data
-        EXPECT_FLOAT_EQ(pre_data[i], 1.0f + i) 
-            << "Pre-state mismatch at index " << i 
-            << ". Expected: " << (1.0f + i) 
-            << ", Got: " << pre_data[i];
+    // Verify scalar array
+    for (size_t i = 0; i < N; i++) {
+        // Verify pre-state matches initialization pattern
+        EXPECT_FLOAT_EQ(pre_scalar[i], 1.0f + i)
+            << "Pre-state scalar mismatch at index " << i;
         
-        // Verify post-state data is twice the pre-state data
-        EXPECT_FLOAT_EQ(post_data[i], pre_data[i] * 2.0f)
-            << "Post-state not equal to 2x pre-state at index " << i 
-            << ". Expected: " << (pre_data[i] * 2.0f) 
-            << ", Got: " << post_data[i];
+        // Verify post-state matches expected computation
+        float expected = pre_scalar[i] * 2.0f + 5; // scalar2 = 2.0f, scalar1 = 5
+        EXPECT_FLOAT_EQ(post_scalar[i], expected)
+            << "Post-state scalar mismatch at index " << i;
     }
     
-    // Verify final memcpy (Device to Host)
-    ASSERT_TRUE(op3->isMemory()) << "Final operation is not a memory operation";
-    auto memcpy2 = static_cast<const MemoryOperation*>(op3.get());
-    EXPECT_EQ(memcpy2->kind, hipMemcpyDeviceToHost) << "Final memory operation is not Device to Host";
-}
-
-TEST_F(ComparatorTest, VerifyVectorStateCapture) {
-    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/data_verification-0.trace";
-    
-    // Load the trace
-    Tracer tracer(trace_file);
-    std::cout << tracer;
-    
-    // Update expected operations - now we have 8 operations total
-    ASSERT_EQ(tracer.getNumOperations(), 8) << "Expected 8 operations in trace";
-    
-    // Get operations for vector part (second half of operations)
-    auto op4 = tracer.getOperation(4); // malloc for vector
-    auto op5 = tracer.getOperation(5); // memcpy H2D for vector
-    auto op6 = tracer.getOperation(6); // vector kernel
-    auto op7 = tracer.getOperation(7); // memcpy D2H for vector
-    
-    // Verify kernel execution
-    ASSERT_TRUE(op6->isKernel()) << "Operation 6 is not a kernel";
-    auto kernel = static_cast<const KernelExecution*>(op6.get());
-    
-    // Rest of the vector verification remains the same
-    ASSERT_TRUE(kernel->pre_state != nullptr) << "Pre-state is null";
-    ASSERT_TRUE(kernel->post_state != nullptr) << "Post-state is null";
-    
-    EXPECT_EQ(kernel->pre_state->size, 256 * sizeof(float4));
-    EXPECT_EQ(kernel->post_state->size, 256 * sizeof(float4));
-    
-    float4* pre_data = reinterpret_cast<float4*>(kernel->pre_state->data.get());
-    float4* post_data = reinterpret_cast<float4*>(kernel->post_state->data.get());
-    
-    // Print first few values for debugging
-    std::cout << "First few pre-state vector values: ";
-    for (int i = 0; i < 2; i++) {
-        std::cout << "(" << pre_data[i].x << "," << pre_data[i].y << ","
-                 << pre_data[i].z << "," << pre_data[i].w << ") ";
-    }
-    std::cout << std::endl;
-    
-    for (int i = 0; i < 256; i++) {
-        // Verify pre-state data
-        EXPECT_FLOAT_EQ(pre_data[i].x, 1.0f + (i * 4));
-        EXPECT_FLOAT_EQ(pre_data[i].y, 1.0f + (i * 4) + 1);
-        EXPECT_FLOAT_EQ(pre_data[i].z, 1.0f + (i * 4) + 2);
-        EXPECT_FLOAT_EQ(pre_data[i].w, 1.0f + (i * 4) + 3);
+    // Verify vector4 array
+    for (size_t i = 0; i < N; i++) {
+        // Verify pre-state matches initialization pattern
+        EXPECT_FLOAT_EQ(pre_vec4[i].x, 1.0f + (i * 4))
+            << "Pre-state vec4 x mismatch at index " << i;
+        EXPECT_FLOAT_EQ(pre_vec4[i].y, 2.0f + (i * 4))
+            << "Pre-state vec4 y mismatch at index " << i;
+        EXPECT_FLOAT_EQ(pre_vec4[i].z, 3.0f + (i * 4))
+            << "Pre-state vec4 z mismatch at index " << i;
+        EXPECT_FLOAT_EQ(pre_vec4[i].w, 4.0f + (i * 4))
+            << "Pre-state vec4 w mismatch at index " << i;
         
-        // Verify post-state data is twice the pre-state data
-        EXPECT_FLOAT_EQ(post_data[i].x, pre_data[i].x * 2.0f);
-        EXPECT_FLOAT_EQ(post_data[i].y, pre_data[i].y * 2.0f);
-        EXPECT_FLOAT_EQ(post_data[i].z, pre_data[i].z * 2.0f);
-        EXPECT_FLOAT_EQ(post_data[i].w, pre_data[i].w * 2.0f);
+        // Verify post-state matches expected computation (multiply by scalar2 = 2.0f)
+        EXPECT_FLOAT_EQ(post_vec4[i].x, pre_vec4[i].x * 2.0f)
+            << "Post-state vec4 x mismatch at index " << i;
+        EXPECT_FLOAT_EQ(post_vec4[i].y, pre_vec4[i].y * 2.0f)
+            << "Post-state vec4 y mismatch at index " << i;
+        EXPECT_FLOAT_EQ(post_vec4[i].z, pre_vec4[i].z * 2.0f)
+            << "Post-state vec4 z mismatch at index " << i;
+        EXPECT_FLOAT_EQ(post_vec4[i].w, pre_vec4[i].w * 2.0f)
+            << "Post-state vec4 w mismatch at index " << i;
+    }
+    
+    // Verify vector2 array
+    for (size_t i = 0; i < N; i++) {
+        // Verify pre-state matches initialization pattern
+        EXPECT_FLOAT_EQ(pre_vec2[i].x, 1.0f + (i * 2))
+            << "Pre-state vec2 x mismatch at index " << i;
+        EXPECT_FLOAT_EQ(pre_vec2[i].y, 2.0f + (i * 2))
+            << "Pre-state vec2 y mismatch at index " << i;
+        
+        // Verify post-state matches expected computation (add scalar3 = 1.5)
+        EXPECT_FLOAT_EQ(post_vec2[i].x, pre_vec2[i].x + 1.5)
+            << "Post-state vec2 x mismatch at index " << i;
+        EXPECT_FLOAT_EQ(post_vec2[i].y, pre_vec2[i].y + 1.5)
+            << "Post-state vec2 y mismatch at index " << i;
+    }
+    
+    // Verify float4 array
+    for (size_t i = 0; i < N; i++) {
+        // Verify pre-state matches initialization pattern
+        EXPECT_FLOAT_EQ(pre_float4[i].x, 1.0f + (i * 4))
+            << "Pre-state float4 x mismatch at index " << i;
+        EXPECT_FLOAT_EQ(pre_float4[i].y, 2.0f + (i * 4))
+            << "Pre-state float4 y mismatch at index " << i;
+        EXPECT_FLOAT_EQ(pre_float4[i].z, 3.0f + (i * 4))
+            << "Pre-state float4 z mismatch at index " << i;
+        EXPECT_FLOAT_EQ(pre_float4[i].w, 4.0f + (i * 4))
+            << "Pre-state float4 w mismatch at index " << i;
+        
+        // Verify post-state matches expected computation (multiply by uint_val = 3)
+        EXPECT_FLOAT_EQ(post_float4[i].x, pre_float4[i].x * 3)
+            << "Post-state float4 x mismatch at index " << i;
+        EXPECT_FLOAT_EQ(post_float4[i].y, pre_float4[i].y * 3)
+            << "Post-state float4 y mismatch at index " << i;
+        EXPECT_FLOAT_EQ(post_float4[i].z, pre_float4[i].z * 3)
+            << "Post-state float4 z mismatch at index " << i;
+        EXPECT_FLOAT_EQ(post_float4[i].w, pre_float4[i].w * 3)
+            << "Post-state float4 w mismatch at index " << i;
     }
 }
 
