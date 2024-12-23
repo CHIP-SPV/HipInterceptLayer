@@ -191,8 +191,13 @@ private:
        << "        std::cerr << \"Failed to open trace file: \" << filename << std::endl;\n"
        << "        return false;\n"
        << "    }\n"
+       << "    \n"
+       << "    // First seek to the offset\n"
        << "    file.seekg(offset);\n"
+       << "    \n"
+       << "    // Read the data directly into the destination\n"
        << "    file.read(static_cast<char*>(dest), size);\n"
+       << "    \n"
        << "    return file.good();\n"
        << "}\n\n";
 
@@ -253,32 +258,35 @@ private:
         const auto &arg = args[i];
         std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
 
-        if (arg.isPointer() && i < op->pre_state->size) {
-            size_t size = op->pre_state->size;
+        if (arg.isPointer()) {
+            size_t size = op->pre_state ? op->pre_state->size : 0;
+            assert((size > 0) && "Size of pointer argument must be greater than 0");
             
             ss << "    // Allocate and initialize " << var_name << "\n";
             ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc("
                << size << ");\n";
             ss << "    if (!" << var_name << "_h) { std::cerr << \"Failed to allocate host memory\\n\"; return 1; }\n";
+            ss << "    memset(" << var_name << "_h, 0, " << size << ");\n";
             
             ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << size << "));\n";
+            ss << "    CHECK_HIP(hipMemset(" << var_name << "_d, 0, " << size << "));\n";
 
-            // Just cast away const when loading
-            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
-               << size << ", (void*)" << var_name << "_h)) { return 1; }\n";
+            if (op->pre_state) {
+                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
+                   << size << ", (void*)" << var_name << "_h)) { return 1; }\n";
 
-            // Cast to void* for hipMemcpy
-            ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
-               << size << ", hipMemcpyHostToDevice));\n\n";
+                ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
+                   << size << ", hipMemcpyHostToDevice));\n\n";
 
-            current_offset += size;
-        } else if (!arg.isPointer() && i < op->pre_state->size) {
-            size_t size = sizeof(arg.getBaseType());
-            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
-               << "sizeof(" << arg.getBaseType() << "), &" << var_name
+                current_offset += size;
+            }
+        } else {
+            // For scalar arguments, use sizeof of the base type
+            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", sizeof("
+               << arg.getBaseType() << "), &" << var_name
                << ")) { return 1; }\n";
 
-            current_offset += size;
+            current_offset += sizeof(arg.getBaseType());
         }
     }
   }
@@ -312,9 +320,10 @@ private:
     // Modify verification code for pointer arguments
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
-        if (arg.isPointer() && i < op->pre_state->size) {
+        if (arg.isPointer()) {
             std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
-            size_t size = op->pre_state->size;
+            size_t size = op->pre_state ? op->pre_state->size : 0;
+            assert((size > 0) && "Size of pointer argument must be greater than 0");
             
             ss << "    // Copy back and verify " << var_name << "\n"
                << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_h, (const void*)" << var_name << "_d, "
