@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_set>
+#include <regex>
 
 class CodeGen {
 public:
@@ -161,6 +162,12 @@ private:
     std::string source = kernel.getModuleSource();
 
     if (!source.empty()) {
+      // Remove all forms of extern "C" declarations
+      std::regex extern_c_regex(R"(extern\s*"C"\s*(\{[^}]*\}|[^;{]*;))");
+      source = std::regex_replace(source, extern_c_regex, "$1");
+      // Also remove standalone extern "C"
+      std::regex standalone_extern_c(R"(extern\s*"C"\s*)");
+      source = std::regex_replace(source, standalone_extern_c, "");
       ss << source << "\n\n";
     } else {
       // Generate kernel declaration with empty body
