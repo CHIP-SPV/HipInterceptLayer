@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "../Comparator.hh"
 #include <sstream>
+#include <filesystem>
 
 class ComparatorTest : public ::testing::Test {
 protected:
@@ -24,8 +25,26 @@ TEST_F(ComparatorTest, IdenticalTracesCompareEqual) {
         kernel.block_dim = {256, 1, 1};
         kernel.shared_mem = 0;
         
-        tracer1.trace_.operations.push_back(std::make_unique<KernelExecution>(kernel));
-        tracer2.trace_.operations.push_back(std::make_unique<KernelExecution>(kernel));
+        // Initialize memory states
+        auto pre_state = std::make_shared<MemoryState>(1024);  // 1KB pre state
+        auto post_state = std::make_shared<MemoryState>(2048); // 2KB post state
+        
+        // Fill with recognizable patterns
+        for (size_t i = 0; i < 1024; i++) {
+            pre_state->data.get()[i] = static_cast<char>(i & 0xFF);
+        }
+        for (size_t i = 0; i < 2048; i++) {
+            post_state->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+        }
+        
+        kernel.pre_state = pre_state;
+        kernel.post_state = post_state;
+        
+        tracer1.trace_.addOperation(std::make_shared<KernelExecution>(kernel));
+        tracer2.trace_.addOperation(std::make_shared<KernelExecution>(kernel));
+
+        tracer1.finalizeTrace();
+        tracer2.finalizeTrace();
     }
 
     // Compare the traces
@@ -45,6 +64,10 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
 
     // Create temporary trace files
     {
+        // First ensure any existing files are removed
+        std::filesystem::remove(trace_file);
+        std::filesystem::remove(new_trace_file);
+        
         Tracer tracer1(trace_file);
         Tracer tracer2(trace_file);
         num_ops = tracer1.getNumOperations();
@@ -62,10 +85,43 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
         kernel2.block_dim = {256, 1, 1};
         kernel2.shared_mem = 0;
 
-        tracer1.trace_.addOperation(std::make_unique<KernelExecution>(kernel1));
+        // Initialize memory states for kernel1
+        auto pre_state1 = std::make_shared<MemoryState>(1024);  // 1KB pre state
+        auto post_state1 = std::make_shared<MemoryState>(2048); // 2KB post state
+        
+        // Fill with recognizable patterns
+        for (size_t i = 0; i < 1024; i++) {
+            pre_state1->data.get()[i] = static_cast<char>(i & 0xFF);
+        }
+        for (size_t i = 0; i < 2048; i++) {
+            post_state1->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+        }
+        
+        kernel1.pre_state = pre_state1;
+        kernel1.post_state = post_state1;
+
+        // Initialize memory states for kernel2
+        auto pre_state2 = std::make_shared<MemoryState>(1024);  // 1KB pre state
+        auto post_state2 = std::make_shared<MemoryState>(2048); // 2KB post state
+        
+        // Fill with different patterns
+        for (size_t i = 0; i < 1024; i++) {
+            pre_state2->data.get()[i] = static_cast<char>((i * 3) & 0xFF);
+        }
+        for (size_t i = 0; i < 2048; i++) {
+            post_state2->data.get()[i] = static_cast<char>((i * 4) & 0xFF);
+        }
+        
+        kernel2.pre_state = pre_state2;
+        kernel2.post_state = post_state2;
+
+        tracer1.trace_.addOperation(std::make_shared<KernelExecution>(kernel1));
 
         tracer2.setFilePath(new_trace_file);
-        tracer2.trace_.addOperation(std::make_unique<KernelExecution>(kernel2));
+        tracer2.trace_.addOperation(std::make_shared<KernelExecution>(kernel2));
+
+        tracer1.finalizeTrace();
+        tracer2.finalizeTrace();
     }
 
     // Compare the traces
@@ -88,6 +144,10 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
 
     // Create temporary trace files
     {
+        // First ensure any existing files are removed
+        std::filesystem::remove(trace_file);
+        std::filesystem::remove(new_trace_file);
+        
         Tracer tracer1(trace_file);
         Tracer tracer2(trace_file);
         
@@ -102,10 +162,39 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
         mem2.size = 2048;  // Different size
         mem2.kind = hipMemcpyHostToDevice;
         
-        tracer1.trace_.operations.push_back(std::make_unique<MemoryOperation>(mem1));
+        // Initialize memory states for mem1
+        auto pre_state1 = std::make_shared<MemoryState>(1024);  // 1KB pre state
+        auto post_state1 = std::make_shared<MemoryState>(1024); // Same size post state
+        
+        // Fill with recognizable patterns
+        for (size_t i = 0; i < 1024; i++) {
+            pre_state1->data.get()[i] = static_cast<char>(i & 0xFF);
+            post_state1->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+        }
+        
+        mem1.pre_state = pre_state1;
+        mem1.post_state = post_state1;
+
+        // Initialize memory states for mem2
+        auto pre_state2 = std::make_shared<MemoryState>(2048);  // 2KB pre state
+        auto post_state2 = std::make_shared<MemoryState>(2048); // Same size post state
+        
+        // Fill with different patterns
+        for (size_t i = 0; i < 2048; i++) {
+            pre_state2->data.get()[i] = static_cast<char>((i * 3) & 0xFF);
+            post_state2->data.get()[i] = static_cast<char>((i * 4) & 0xFF);
+        }
+        
+        mem2.pre_state = pre_state2;
+        mem2.post_state = post_state2;
+        
+        tracer1.trace_.addOperation(std::make_shared<MemoryOperation>(mem1));
 
         tracer2.setFilePath(new_trace_file);
-        tracer2.trace_.operations.push_back(std::make_unique<MemoryOperation>(mem2));
+        tracer2.trace_.addOperation(std::make_shared<MemoryOperation>(mem2));
+
+        tracer1.finalizeTrace();
+        tracer2.finalizeTrace();
     }
 
     // Compare the traces

@@ -199,13 +199,20 @@ private:
        << "        return false;\n"
        << "    }\n"
        << "    \n"
-       << "    // First seek to the offset\n"
+       << "    // First seek to the offset in the pre_state data\n"
        << "    file.seekg(offset);\n"
+       << "    if (!file) {\n"
+       << "        std::cerr << \"Failed to seek to offset \" << offset << std::endl;\n"
+       << "        return false;\n"
+       << "    }\n"
        << "    \n"
        << "    // Read the data directly into the destination\n"
        << "    file.read(static_cast<char*>(dest), size);\n"
-       << "    \n"
-       << "    return file.good();\n"
+       << "    if (!file) {\n"
+       << "        std::cerr << \"Failed to read \" << size << \" bytes at offset \" << offset << std::endl;\n"
+       << "        return false;\n"
+       << "    }\n"
+       << "    return true;\n"
        << "}\n\n";
 
     ss << "int main() {\n"
@@ -244,7 +251,6 @@ private:
 
   void generateInitialization(std::stringstream &ss,
                               KernelExecution *op) {
-    size_t current_offset = 0;
     if (!op->isKernel()) {
         throw std::runtime_error("Operation is not a kernel execution");
     }
@@ -261,38 +267,58 @@ private:
        << "            } \\\n"
        << "        } while (0)\n\n";
 
+    size_t current_offset = 0;
+    size_t pointer_arg_idx = 0;  // Track which pointer argument we're on
+
+    // First pass: count pointer arguments to validate arg_sizes
+    size_t num_pointer_args = 0;
+    for (const auto &arg : args) {
+        if (arg.isPointer()) num_pointer_args++;
+    }
+
+    // Validate arg_sizes
+    if (op->arg_sizes.empty() && num_pointer_args > 0) {
+        std::cerr << "Error: No argument sizes available for kernel " << op->kernel_name << std::endl;
+        throw std::runtime_error("Missing argument sizes");
+    }
+    if (op->arg_sizes.size() != num_pointer_args) {
+        std::cerr << "Error: Mismatch in number of pointer arguments (" << num_pointer_args 
+                  << ") and argument sizes (" << op->arg_sizes.size() << ")" << std::endl;
+        throw std::runtime_error("Argument size mismatch");
+    }
+
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
         std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
 
         if (arg.isPointer()) {
-            size_t size = op->pre_state ? op->pre_state->size : 0;
-            assert((size > 0) && "Size of pointer argument must be greater than 0");
+            size_t arg_size = op->arg_sizes[pointer_arg_idx];
+            if (arg_size == 0) {
+                std::cerr << "Error: Zero size for pointer argument " << i << " of kernel " << op->kernel_name << std::endl;
+                throw std::runtime_error("Invalid argument size");
+            }
             
             ss << "    // Allocate and initialize " << var_name << "\n";
             ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc("
-               << size << ");\n";
+               << arg_size << ");\n";
             ss << "    if (!" << var_name << "_h) { std::cerr << \"Failed to allocate host memory\\n\"; return 1; }\n";
-            ss << "    memset(" << var_name << "_h, 0, " << size << ");\n";
             
-            ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << size << "));\n";
-            ss << "    CHECK_HIP(hipMemset(" << var_name << "_d, 0, " << size << "));\n";
+            ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << arg_size << "));\n";
 
             if (op->pre_state) {
-                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", "
-                   << size << ", (void*)" << var_name << "_h)) { return 1; }\n";
-
+                ss << "    // Load pre-execution state from trace\n";
+                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_size 
+                   << ", " << var_name << "_h)) { return 1; }\n";
                 ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
-                   << size << ", hipMemcpyHostToDevice));\n\n";
-
-                current_offset += size;
+                   << arg_size << ", hipMemcpyHostToDevice));\n\n";
+                current_offset += arg_size;
             }
+            pointer_arg_idx++;
         } else {
-            // For scalar arguments, use sizeof of the base type
+            ss << "    // Load scalar argument from trace\n";
             ss << "    if (!loadTraceData(trace_file, " << current_offset << ", sizeof("
                << arg.getBaseType() << "), &" << var_name
                << ")) { return 1; }\n";
-
             current_offset += sizeof(arg.getBaseType());
         }
     }
@@ -313,30 +339,28 @@ private:
 
     const auto &args = kernel.getArguments();
     for (size_t i = 0; i < args.size(); i++) {
-      if (i > 0)
-        ss << ", ";
-      std::string var_name =
-          "arg_" + std::to_string(i) + "_" + op->kernel_name;
-      ss << (args[i].isPointer() ? var_name + "_d" : var_name);
+        if (i > 0)
+            ss << ", ";
+        std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
+        ss << (args[i].isPointer() ? var_name + "_d" : var_name);
     }
     ss << ");\n";
-    // Add synchronization and error checking after kernel launch
     ss << "    CHECK_HIP(hipDeviceSynchronize());\n"
        << "    CHECK_HIP(hipGetLastError());\n\n";
     
-    // Modify verification code for pointer arguments
+    // Verify pointer arguments using their individual sizes
+    size_t pointer_arg_idx = 0;
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
         if (arg.isPointer()) {
             std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
-            size_t size = op->pre_state ? op->pre_state->size : 0;
-            assert((size > 0) && "Size of pointer argument must be greater than 0");
+            size_t arg_size = op->arg_sizes[pointer_arg_idx++];
             
             ss << "    // Copy back and verify " << var_name << "\n"
                << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_h, (const void*)" << var_name << "_d, "
-               << size << ", hipMemcpyDeviceToHost));\n"
+               << arg_size << ", hipMemcpyDeviceToHost));\n"
                << "    std::cout << \"Hash for " << var_name << ": \" << "
-               << "calculateHash(" << var_name << "_h, " << size << ") << std::endl;\n\n";
+               << "calculateHash(" << var_name << "_h, " << arg_size << ") << std::endl;\n\n";
         }
     }
   }

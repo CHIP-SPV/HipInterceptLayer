@@ -391,3 +391,93 @@ TEST_F(KernelManagerTest, HIPVectorTypeHandling) {
     // Clean up
     std::remove(temp_filename.c_str());
 }
+
+TEST(KernelExecutionTest, MemoryStateHandling) {
+    // Create test memory states
+    auto pre_state = std::make_shared<MemoryState>(1024);  // 1KB pre state
+    auto post_state = std::make_shared<MemoryState>(2048); // 2KB post state
+    
+    // Fill with recognizable patterns
+    for (size_t i = 0; i < 1024; i++) {
+        pre_state->data.get()[i] = static_cast<char>(i & 0xFF);
+    }
+    for (size_t i = 0; i < 2048; i++) {
+        post_state->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+    }
+
+    // Setup kernel execution parameters
+    std::string kernel_name = "test_kernel";
+    std::cout << "Original kernel name: " << kernel_name << " length: " << kernel_name.length() << std::endl;
+    
+    void* function_ptr = reinterpret_cast<void*>(0x12345678);  // Dummy function pointer
+    dim3 grid(2, 2, 1);
+    dim3 block(32, 1, 1);
+    size_t shared_mem = 1024;
+    hipStream_t stream = nullptr;
+
+    // Setup kernel arguments
+    std::vector<void*> arg_ptrs = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000)};
+    std::vector<size_t> arg_sizes = {sizeof(int*), sizeof(float*)};
+
+    // Create kernel execution with these states
+    KernelExecution exec(pre_state, post_state, function_ptr, kernel_name,
+                        grid, block, shared_mem, stream);
+    exec.arg_ptrs = arg_ptrs;
+    exec.arg_sizes = arg_sizes;
+
+    std::cout << "Before serialization, kernel name: " << exec.kernel_name << " length: " << exec.kernel_name.length() << std::endl;
+
+    // Test serialization/deserialization
+    std::string temp_filename = "test_kernel.bin";
+    {
+        std::ofstream file(temp_filename, std::ios::binary);
+        ASSERT_TRUE(file.is_open());
+        exec.serialize(file);
+        file.close();
+    }
+
+    // Verify the file was written and has content
+    {
+        std::ifstream check_file(temp_filename, std::ios::binary | std::ios::ate);
+        ASSERT_TRUE(check_file.is_open());
+        std::streamsize size = check_file.tellg();
+        std::cout << "Serialized file size: " << size << " bytes" << std::endl;
+        ASSERT_GT(size, 0);
+        check_file.close();
+    }
+
+    std::shared_ptr<KernelExecution> exec2;
+    {
+        std::ifstream file(temp_filename, std::ios::binary);
+        ASSERT_TRUE(file.is_open());
+        exec2 = KernelExecution::create_from_file(file);
+        file.close();
+    }
+
+    ASSERT_NE(exec2, nullptr);
+    std::cout << "After deserialization, kernel name: " << exec2->kernel_name << " length: " << exec2->kernel_name.length() << std::endl;
+
+    // Verify states are preserved after deserialization
+    ASSERT_EQ(exec2->pre_state->size, 1024);
+    ASSERT_EQ(exec2->post_state->size, 2048);
+    ASSERT_EQ(exec2->function_address, function_ptr);
+    ASSERT_EQ(exec2->grid_dim.x, grid.x);
+    ASSERT_EQ(exec2->grid_dim.y, grid.y);
+    ASSERT_EQ(exec2->block_dim.x, block.x);
+    ASSERT_EQ(exec2->block_dim.y, block.y);
+    ASSERT_EQ(exec2->shared_mem, shared_mem);
+    ASSERT_EQ(exec2->stream, stream);
+    ASSERT_EQ(exec2->arg_ptrs.size(), 2);
+    ASSERT_EQ(exec2->arg_sizes.size(), 2);
+
+    // Verify data is preserved after deserialization
+    for (size_t i = 0; i < 1024; i++) {
+        ASSERT_EQ(static_cast<unsigned char>(exec2->pre_state->data.get()[i]), static_cast<unsigned char>(i & 0xFF));
+    }
+    for (size_t i = 0; i < 2048; i++) {
+        ASSERT_EQ(static_cast<unsigned char>(exec2->post_state->data.get()[i]), static_cast<unsigned char>((i * 2) & 0xFF));
+    }
+
+    // Clean up
+    std::remove(temp_filename.c_str());
+}

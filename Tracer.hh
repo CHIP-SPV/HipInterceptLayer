@@ -82,6 +82,7 @@ public:
     }
 
     void serialize(std::ofstream& file) const {
+        std::cout << "Serializing MemoryState of size " << size << " bytes" << std::endl;
         // Write start magic
         file.write(reinterpret_cast<const char*>(&MAGIC_START), sizeof(MAGIC_START));
         
@@ -90,6 +91,15 @@ public:
         
         // Write data if present
         if (size > 0 && data) {
+            std::cout << "Writing " << size << " bytes of data" << std::endl;
+            // Print first few bytes for debugging
+            if (size >= 4) {
+                std::cout << "First 4 bytes: ";
+                for (size_t i = 0; i < 4; ++i) {
+                    std::cout << std::hex << static_cast<int>(data.get()[i]) << " ";
+                }
+                std::cout << std::dec << std::endl;
+            }
             file.write(data.get(), size);
         }
         
@@ -112,11 +122,21 @@ public:
         // Read size
         size_t size;
         file.read(reinterpret_cast<char*>(&size), sizeof(size));
+        std::cout << "Deserializing MemoryState of size " << size << " bytes" << std::endl;
         
         // Create state and read data
         MemoryState state(size);
         if (size > 0) {
+            std::cout << "Reading " << size << " bytes of data" << std::endl;
             file.read(state.data.get(), size);
+            // Print first few bytes for debugging
+            if (size >= 4) {
+                std::cout << "First 4 bytes: ";
+                for (size_t i = 0; i < 4; ++i) {
+                    std::cout << std::hex << static_cast<int>(state.data.get()[i]) << " ";
+                }
+                std::cout << std::dec << std::endl;
+            }
         }
         
         // Read and verify end magic
@@ -147,7 +167,6 @@ class Operation {
 public:
     std::shared_ptr<MemoryState> pre_state;
     std::shared_ptr<MemoryState> post_state;
-    mutable size_t execution_order;
     OperationType type;
 
     bool isKernel() const { return type == OperationType::KERNEL; }
@@ -162,16 +181,7 @@ public:
     Operation(std::shared_ptr<MemoryState> pre_state, std::shared_ptr<MemoryState> post_state, OperationType type)
         : pre_state(pre_state), post_state(post_state), type(type) {}
 
-    Operation() : pre_state(nullptr), post_state(nullptr), execution_order(0) {}
-
-    // Make this const
-    void setExecutionOrder(size_t order) const {
-        execution_order = order;
-    }
-
-    size_t getExecutionOrder() const {
-        return execution_order;
-    }
+    Operation() : pre_state(nullptr), post_state(nullptr) {}
 
     static std::shared_ptr<Operation> deserialize(std::ifstream& file);
 
@@ -197,6 +207,8 @@ class KernelExecution : public Operation {
     dim3 block_dim;
     size_t shared_mem;
     hipStream_t stream;
+    std::vector<void*> arg_ptrs;
+    std::vector<size_t> arg_sizes;  // Sizes of pointer arguments
     
     // Add default constructor
     KernelExecution() : Operation(nullptr, nullptr, OperationType::KERNEL), 
@@ -206,8 +218,6 @@ class KernelExecution : public Operation {
         block_dim(),
         shared_mem(0),
         stream(nullptr) {
-        pre_state = std::make_shared<MemoryState>(1);
-        post_state = std::make_shared<MemoryState>(1);
     }
 
     // Existing constructor
@@ -226,13 +236,8 @@ class KernelExecution : public Operation {
           block_dim(block_dim),
           shared_mem(shared_mem),
           stream(stream) {
-            pre_state = std::make_shared<MemoryState>(1);
-            post_state = std::make_shared<MemoryState>(1);
-          }
+    }
     
-    std::vector<void*> arg_ptrs;
-    std::vector<size_t> arg_sizes;
-
     // Replace operator<< with writeToStream
     void writeToStream(std::ostream& os) const override {
         os << "KernelExecution: " << kernel_name 
@@ -250,6 +255,7 @@ class KernelExecution : public Operation {
         
         // Write kernel name length and data
         uint32_t name_length = static_cast<uint32_t>(kernel_name.length());
+        std::cout << "Serializing kernel name: " << kernel_name << " length: " << name_length << std::endl;
         file.write(reinterpret_cast<const char*>(&name_length), sizeof(name_length));
         file.write(kernel_name.c_str(), name_length);
         
@@ -259,7 +265,6 @@ class KernelExecution : public Operation {
         file.write(reinterpret_cast<const char*>(&block_dim), sizeof(block_dim));
         file.write(reinterpret_cast<const char*>(&shared_mem), sizeof(shared_mem));
         file.write(reinterpret_cast<const char*>(&stream), sizeof(stream));
-        file.write(reinterpret_cast<const char*>(&execution_order), sizeof(execution_order));
         
         // Write argument data
         uint32_t num_args = static_cast<uint32_t>(arg_ptrs.size());
@@ -267,10 +272,26 @@ class KernelExecution : public Operation {
         for (void* ptr : arg_ptrs) {
             file.write(reinterpret_cast<const char*>(&ptr), sizeof(void*));
         }
+
+        // Write argument sizes
+        uint32_t num_sizes = static_cast<uint32_t>(arg_sizes.size());
+        file.write(reinterpret_cast<const char*>(&num_sizes), sizeof(num_sizes));
+        for (size_t size : arg_sizes) {
+            file.write(reinterpret_cast<const char*>(&size), sizeof(size_t));
+        }
         
-        // Write memory states if present
-        pre_state.get()->serialize(file);
-        post_state.get()->serialize(file);
+        // Write memory states
+        bool has_pre_state = pre_state != nullptr;
+        file.write(reinterpret_cast<const char*>(&has_pre_state), sizeof(has_pre_state));
+        if (has_pre_state) {
+            pre_state->serialize(file);
+        }
+
+        bool has_post_state = post_state != nullptr;
+        file.write(reinterpret_cast<const char*>(&has_post_state), sizeof(has_post_state));
+        if (has_post_state) {
+            post_state->serialize(file);
+        }
     }
 
     static std::shared_ptr<KernelExecution> create_from_file(std::ifstream& file) {
@@ -282,18 +303,28 @@ class KernelExecution : public Operation {
     protected:
     void deserializeImpl(std::ifstream& file) override {
         std::cout << "Deserializing KernelExecution" << std::endl;
+        
+        // Read and verify operation type
+        OperationType op_type;
+        file.read(reinterpret_cast<char*>(&op_type), sizeof(op_type));
+        if (op_type != OperationType::KERNEL) {
+            std::cerr << "Invalid operation type during KernelExecution deserialization" << std::endl;
+            throw std::runtime_error("Invalid operation type");
+        }
+        
         // Read kernel name
         uint32_t name_length;
         file.read(reinterpret_cast<char*>(&name_length), sizeof(name_length));
-        std::vector<char> name_buffer(name_length + 1);
-        file.read(name_buffer.data(), name_length);
-        name_buffer[name_length] = '\0';
-        kernel_name = std::string(name_buffer.data());
-        if (kernel_name.empty()) {
-            std::cerr << "Kernel name is empty" << std::endl;
-            std::abort();
+        std::cout << "Reading kernel name of length: " << name_length << std::endl;
+        
+        if (name_length > 0 && name_length < 1024) {  // Add reasonable size limit
+            std::vector<char> name_buffer(name_length + 1, '\0');
+            file.read(name_buffer.data(), name_length);
+            kernel_name = std::string(name_buffer.data(), name_length);
+            std::cout << "Deserialized kernel name: " << kernel_name << std::endl;
         } else {
-            std::cout << "deserialized Kernel name: " << kernel_name << std::endl;
+            std::cerr << "Warning: Invalid kernel name length: " << name_length << std::endl;
+            throw std::runtime_error("Invalid kernel name length");
         }
         
         // Read kernel data
@@ -302,19 +333,45 @@ class KernelExecution : public Operation {
         file.read(reinterpret_cast<char*>(&block_dim), sizeof(block_dim));
         file.read(reinterpret_cast<char*>(&shared_mem), sizeof(shared_mem));
         file.read(reinterpret_cast<char*>(&stream), sizeof(stream));
-        file.read(reinterpret_cast<char*>(&execution_order), sizeof(execution_order));
         
         // Read arguments
         uint32_t num_args;
         file.read(reinterpret_cast<char*>(&num_args), sizeof(num_args));
+        if (num_args > 1024) {  // Add reasonable size limit
+            throw std::runtime_error("Invalid number of arguments");
+        }
         arg_ptrs.resize(num_args);
         for (uint32_t i = 0; i < num_args; i++) {
             file.read(reinterpret_cast<char*>(&arg_ptrs[i]), sizeof(void*));
         }
+
+        // Read argument sizes
+        uint32_t num_sizes;
+        file.read(reinterpret_cast<char*>(&num_sizes), sizeof(num_sizes));
+        if (num_sizes > 1024) {  // Add reasonable size limit
+            throw std::runtime_error("Invalid number of argument sizes");
+        }
+        arg_sizes.resize(num_sizes);
+        for (uint32_t i = 0; i < num_sizes; i++) {
+            file.read(reinterpret_cast<char*>(&arg_sizes[i]), sizeof(size_t));
+        }
         
         // Read memory states
-        pre_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
-        post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+        bool has_pre_state;
+        file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
+        if (has_pre_state) {
+            pre_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+        } else {
+            pre_state = nullptr;
+        }
+
+        bool has_post_state;
+        file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
+        if (has_post_state) {
+            post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+        } else {
+            post_state = nullptr;
+        }
     }
 
 
@@ -339,8 +396,6 @@ class MemoryOperation : public Operation {
         value(0),
         kind(hipMemcpyDefault),
         stream(nullptr) {
-            pre_state = std::make_shared<MemoryState>(1);
-            post_state = std::make_shared<MemoryState>(1);
         }
 
     // Existing constructor
@@ -361,8 +416,6 @@ class MemoryOperation : public Operation {
           value(value),
           kind(kind),
           stream(stream) {
-            pre_state = std::make_shared<MemoryState>(1);
-            post_state = std::make_shared<MemoryState>(1);
         }
         
     // Replace operator<< with writeToStream
@@ -370,7 +423,6 @@ class MemoryOperation : public Operation {
         os << "MemoryOperation: " << static_cast<int>(type) << " dst: " << dst
            << " src: " << src << " size: " << size
            << " value: " << value << " kind: " << kind
-           << " execution_order: " << execution_order
            << " stream: " << stream;
     }
 
@@ -388,21 +440,18 @@ class MemoryOperation : public Operation {
         file.write(reinterpret_cast<const char*>(&value), sizeof(value));
         file.write(reinterpret_cast<const char*>(&kind), sizeof(kind));
         file.write(reinterpret_cast<const char*>(&stream), sizeof(stream));
-        file.write(reinterpret_cast<const char*>(&execution_order), sizeof(execution_order));
         
         // Write memory states
-        if (pre_state) {
+        bool has_pre_state = pre_state != nullptr;
+        file.write(reinterpret_cast<const char*>(&has_pre_state), sizeof(has_pre_state));
+        if (has_pre_state) {
             pre_state->serialize(file);
-        } else {
-            size_t size = 0;
-            file.write(reinterpret_cast<const char*>(&size), sizeof(size));
         }
 
-        if (post_state) {
+        bool has_post_state = post_state != nullptr;
+        file.write(reinterpret_cast<const char*>(&has_post_state), sizeof(has_post_state));
+        if (has_post_state) {
             post_state->serialize(file);
-        } else {
-            size_t size = 0;
-            file.write(reinterpret_cast<const char*>(&size), sizeof(size));
         }
     }
 
@@ -415,6 +464,14 @@ class MemoryOperation : public Operation {
     protected:
     void deserializeImpl(std::ifstream& file) override {
         std::cout << "Deserializing MemoryOperation" << std::endl;
+        // Read and verify operation type
+        OperationType op_type;
+        file.read(reinterpret_cast<char*>(&op_type), sizeof(op_type));
+        if (op_type != OperationType::MEMORY) {
+            std::cerr << "Invalid operation type during MemoryOperation deserialization" << std::endl;
+            throw std::runtime_error("Invalid operation type");
+        }
+        
         // Read memory operation data
         file.read(reinterpret_cast<char*>(&type), sizeof(type));
         file.read(reinterpret_cast<char*>(&dst), sizeof(dst));
@@ -423,11 +480,23 @@ class MemoryOperation : public Operation {
         file.read(reinterpret_cast<char*>(&value), sizeof(value));
         file.read(reinterpret_cast<char*>(&kind), sizeof(kind));
         file.read(reinterpret_cast<char*>(&stream), sizeof(stream));
-        file.read(reinterpret_cast<char*>(&execution_order), sizeof(execution_order));
         
         // Read memory states
-        pre_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
-        post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+        bool has_pre_state;
+        file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
+        if (has_pre_state) {
+            pre_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+        } else {
+            pre_state = nullptr;
+        }
+
+        bool has_post_state;
+        file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
+        if (has_post_state) {
+            post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+        } else {
+            post_state = nullptr;
+        }
     }
 };
 
@@ -444,7 +513,6 @@ class Trace {
     }
 
     void addOperation(std::shared_ptr<Operation> op) {  // Take ownership of operation
-        op->setExecutionOrder(operations.size());
         operations.push_back(std::move(op));
     }
 };
@@ -507,10 +575,11 @@ public:
         os << "Tracer: " << std::endl;
         os << "Trace: " << tracer.trace_.operations.size() << " operations" << std::endl;
         for (const auto& op : tracer.trace_.operations) {
+            auto idx = &op - &tracer.trace_.operations[0];
             if (auto kernel_exec = dynamic_cast<const KernelExecution*>(op.get())) {
-                os << "Op#" << op->execution_order << " " << *kernel_exec << std::endl;
+                os << "Op#" << idx << " " << *kernel_exec << std::endl;
             } else if (auto mem_op = dynamic_cast<const MemoryOperation*>(op.get())) {
-                os << "Op#" << op->execution_order << " " << *mem_op << std::endl;
+                os << "Op#" << idx << " " << *mem_op << std::endl;
             }
         }
         return os;

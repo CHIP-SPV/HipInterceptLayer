@@ -68,7 +68,7 @@ void Tracer::finalizeTrace() {
     std::cout << "Replacing " << file_path << " with " << final_trace_path << std::endl;
     std::filesystem::rename(final_trace_path, file_path);
     
-    std::cout << "\n\nTrace finalized successfully" << std::endl;
+    std::cout << "\n\nTrace finalized successfully with # of operations: " << trace_.operations.size() << std::endl;
     // kernel_manager_ << std::cout;
     initialized_ = false;
 }
@@ -173,14 +173,12 @@ Tracer::Tracer(const std::string& path) : file_path{path} {
 }
 
 std::shared_ptr<Operation> Operation::deserialize(std::ifstream& file) {
-    auto start_pos = file.tellg();
-    
     // Read operation type
     OperationType type;
     file.read(reinterpret_cast<char*>(&type), sizeof(type));
     
     std::cout << "Read operation type 0x" << std::hex << static_cast<uint32_t>(type) 
-              << std::dec << " at position " << start_pos << std::endl;
+              << std::dec << " at position " << file.tellg() << std::endl;
 
     // Validate magic numbers
     if (type != OperationType::KERNEL && type != OperationType::MEMORY) {
@@ -190,8 +188,11 @@ std::shared_ptr<Operation> Operation::deserialize(std::ifstream& file) {
                   << "  KERNEL (0x" << std::hex << static_cast<uint32_t>(OperationType::KERNEL) << ")\n"
                   << "  MEMORY (0x" << std::hex << static_cast<uint32_t>(OperationType::MEMORY) << ")"
                   << std::dec << std::endl;
-        std::abort();
+        throw std::runtime_error("Invalid operation type");
     }
+
+    // Seek back to start of operation
+    file.seekg(-static_cast<long>(sizeof(type)), std::ios::cur);
 
     switch(type) {
         case OperationType::KERNEL: 
@@ -200,6 +201,6 @@ std::shared_ptr<Operation> Operation::deserialize(std::ifstream& file) {
             return MemoryOperation::create_from_file(file);
         default: 
             // This should never happen due to the validation above
-            std::abort();
+            throw std::runtime_error("Unknown operation type");
     }
 }

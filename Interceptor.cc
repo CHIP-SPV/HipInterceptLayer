@@ -158,37 +158,38 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes, h
     op.src = src;
     op.size = sizeBytes;
     op.kind = kind;
-    static uint64_t op_count = 0;
-    op.execution_order = op_count++;
+
+    // For device-to-host copies, we need to track the source pointer
+    void* ptr_to_track = (kind == hipMemcpyDeviceToHost) ? const_cast<void*>(src) : dst;
     
     // Initialize pre_state and post_state
-    op.pre_state = std::make_shared<MemoryState>(sizeBytes);
-    op.post_state = std::make_shared<MemoryState>(sizeBytes);
+    auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(ptr_to_track);
+    if (base_ptr && info) {
+        op.pre_state = std::make_shared<MemoryState>(info->size);
+        op.post_state = std::make_shared<MemoryState>(info->size);
     
-    // Capture pre-copy state if destination is GPU memory
-    if (kind != hipMemcpyHostToHost) {
-        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
-        if (base_ptr && info) {
+        // Capture pre-copy state if source is GPU memory
+        if (kind != hipMemcpyHostToHost) {
             createShadowCopy(base_ptr, *info);
-            memcpy(op.pre_state->data.get(), info->shadow_copy.get(), sizeBytes);
+            memcpy(op.pre_state->data.get(), info->shadow_copy.get(), info->size);
         }
+    
+        // Execute the actual memory copy first
+        hipError_t result = get_real_hipMemcpy()(dst, src, sizeBytes, kind);
+    
+        // Capture post-copy state if destination is GPU memory
+        if (kind != hipMemcpyHostToHost && kind != hipMemcpyDeviceToHost) {
+            createShadowCopy(base_ptr, *info);
+            memcpy(op.post_state->data.get(), info->shadow_copy.get(), info->size);
+        }
+    
+        // Record operation using Tracer
+        Tracer::instance().recordMemoryOperation(op);
+        return result;
     }
     
-    // Perform the copy
-    hipError_t result = get_real_hipMemcpy()(dst, src, sizeBytes, kind);
-    
-    // Capture post-copy state
-    if (kind != hipMemcpyHostToHost) {
-        auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
-        if (base_ptr && info) {
-            createShadowCopy(base_ptr, *info);
-            memcpy(op.post_state->data.get(), info->shadow_copy.get(), sizeBytes);
-        }
-    }
-    
-    // Record operation using Tracer
-    Tracer::instance().recordMemoryOperation(op);
-    return result;
+    // If we couldn't find the allocation, just perform the copy without recording
+    return get_real_hipMemcpy()(dst, src, sizeBytes, kind);
 }
 
 static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
@@ -200,32 +201,31 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
     op.dst = dst;
     op.size = sizeBytes;
     op.value = value;
-    static uint64_t op_count = 0;
-    op.execution_order = op_count++;
     
     // Initialize states
-    op.pre_state = std::make_shared<MemoryState>(sizeBytes);
-    op.post_state = std::make_shared<MemoryState>(sizeBytes);
-    
-    // Capture pre-set state
     auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
     if (base_ptr && info) {
+        op.pre_state = std::make_shared<MemoryState>(info->size);
+        op.post_state = std::make_shared<MemoryState>(info->size);
+        
+        // Capture pre-set state
         createShadowCopy(base_ptr, *info);
-        memcpy(op.pre_state->data.get(), info->shadow_copy.get(), sizeBytes);
-    }
+        memcpy(op.pre_state->data.get(), info->shadow_copy.get(), info->size);
     
     // Perform the memset
     hipError_t result = get_real_hipMemset()(dst, value, sizeBytes);
     
     // Capture post-set state
-    if (base_ptr && info) {
         createShadowCopy(base_ptr, *info);
-        memcpy(op.post_state->data.get(), info->shadow_copy.get(), sizeBytes);
-    }
+        memcpy(op.post_state->data.get(), info->shadow_copy.get(), info->size);
     
     // Record operation using Tracer
     Tracer::instance().recordMemoryOperation(op);
     return result;
+    }
+    
+    // If we couldn't find the allocation, just perform the memset without recording
+    return get_real_hipMemset()(dst, value, sizeBytes);
 }
 
 static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlocks,
@@ -245,8 +245,6 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     exec.block_dim = dimBlocks;
     exec.shared_mem = sharedMemBytes;
     exec.stream = stream;
-    static uint64_t kernel_count = 0;
-    exec.execution_order = kernel_count++;
 
     std::cout << "\nDEBUG: Processing kernel arguments:"
               << "\n  Total args: " << kernel.getArguments().size() << std::endl;
@@ -269,13 +267,53 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
                 total_state_size += info->size;
                 arg_sizes.push_back(info->size);
                 device_ptrs.push_back(device_ptr);
+                exec.arg_sizes.push_back(info->size);  // Store size in execution record
             }
         }
+        exec.arg_ptrs.push_back(param_value);  // Store all argument pointers
     }
 
     // Allocate combined state buffers
     exec.pre_state = std::make_shared<MemoryState>(total_state_size);
     exec.post_state = std::make_shared<MemoryState>(total_state_size);
+
+    // Print pre-execution argument values
+    std::cout << "\nPRE-EXECUTION ARGUMENT VALUES:" << std::endl;
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        void* param_value = args[i];
+        
+        std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+        if (arg.isPointer()) {
+            void* device_ptr = *(void**)param_value;
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)";
+                // Print first few values if it's a numeric type
+                if (info->shadow_copy) {
+                    std::cout << "\n    First few values: ";
+                    float* values = reinterpret_cast<float*>(info->shadow_copy.get());
+                    for (size_t j = 0; j < std::min(size_t(3), info->size/sizeof(float)); j++) {
+                        std::cout << values[j] << " ";
+                    }
+                }
+            } else {
+                std::cout << "Pointer " << device_ptr << " (not tracked)";
+            }
+        } else {
+            // For non-pointer types, print the raw value
+            if (arg.getType() == "int" || arg.getType() == "unsigned int") {
+                std::cout << *(int*)param_value;
+            } else if (arg.getType() == "float") {
+                std::cout << *(float*)param_value;
+            } else if (arg.getType() == "double") {
+                std::cout << *(double*)param_value;
+            } else {
+                std::cout << "Raw value at " << param_value;
+            }
+        }
+        std::cout << std::endl;
+    }
     
     // Second pass: capture pre-execution state
     size_t offset = 0;
@@ -295,6 +333,45 @@ static hipError_t hipLaunchKernel_impl(const void *function_address, dim3 numBlo
     hipError_t result = get_real_hipLaunchKernel()(function_address, numBlocks, 
                                                   dimBlocks, args, sharedMemBytes, stream);
     (void)get_real_hipDeviceSynchronize()();
+    
+    // Print post-execution argument values
+    std::cout << "\nPOST-EXECUTION ARGUMENT VALUES:" << std::endl;
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        void* param_value = args[i];
+        
+        std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+        if (arg.isPointer()) {
+            void* device_ptr = *(void**)param_value;
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)";
+                // Create fresh shadow copy to get current values
+                createShadowCopy(base_ptr, *info);
+                if (info->shadow_copy) {
+                    std::cout << "\n    First few values: ";
+                    float* values = reinterpret_cast<float*>(info->shadow_copy.get());
+                    for (size_t j = 0; j < std::min(size_t(3), info->size/sizeof(float)); j++) {
+                        std::cout << values[j] << " ";
+                    }
+                }
+            } else {
+                std::cout << "Pointer " << device_ptr << " (not tracked)";
+            }
+        } else {
+            // For non-pointer types, print the raw value (these shouldn't change)
+            if (arg.getType() == "int" || arg.getType() == "unsigned int") {
+                std::cout << *(int*)param_value;
+            } else if (arg.getType() == "float") {
+                std::cout << *(float*)param_value;
+            } else if (arg.getType() == "double") {
+                std::cout << *(double*)param_value;
+            } else {
+                std::cout << "Raw value at " << param_value;
+            }
+        }
+        std::cout << std::endl;
+    }
     
     // Capture post-execution state
     std::cout << "DEBUG: Capturing post-execution state..." << std::endl;
@@ -505,8 +582,6 @@ hipError_t hipMalloc(void **ptr, size_t size) {
     op.src = nullptr;
     op.size = size;
     op.kind = hipMemcpyHostToHost;
-    static uint64_t op_count = 0;
-    op.execution_order = op_count++;
     
     hipError_t result = get_real_hipMalloc()(ptr, size);
     
@@ -517,17 +592,17 @@ hipError_t hipMalloc(void **ptr, size_t size) {
         auto& info = Interceptor::instance().addAllocation(*ptr, size);
         
         // Create and capture initial state
-        op.pre_state = std::make_shared<MemoryState>(size);
-        op.post_state = std::make_shared<MemoryState>(size);
+        // op.pre_state = std::make_shared<MemoryState>(size);
+        // op.post_state = std::make_shared<MemoryState>(size);
         
         // Capture initial state of allocated memory
-        createShadowCopy(*ptr, info);
-        memcpy(op.pre_state->data.get(), info.shadow_copy.get(), size);
-        memcpy(op.post_state->data.get(), info.shadow_copy.get(), size);
+        // createShadowCopy(*ptr, info);
+        // memcpy(op.pre_state->data.get(), info.shadow_copy.get(), size);
+        // memcpy(op.post_state->data.get(), info.shadow_copy.get(), size);
         
         std::cout << "Tracking GPU allocation at " << *ptr 
                   << " of size " << size << std::endl;
-        Tracer::instance().recordMemoryOperation(op);
+        // Tracer::instance().recordMemoryOperation(op);
     }
     
     return result;
@@ -598,8 +673,6 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     exec.block_dim = {blockDimX, blockDimY, blockDimZ};
     exec.shared_mem = sharedMemBytes;
     exec.stream = stream;
-    static uint64_t kernel_count = 0;
-    exec.execution_order = kernel_count++;
 
     std::cout << "\nDEBUG: Processing kernel arguments:"
               << "\n  Total args: " << kernel.getArguments().size() << std::endl;
@@ -615,23 +688,59 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
         const auto& arg = arguments[i];
         void* param_value = kernelParams[i];
         
-        // For pointer types, we need to dereference kernelParams[i] to get the actual pointer
-        if (arg.getType().find("*") != std::string::npos && !arg.isVector()) {
+        if (arg.isPointer()) {
             void* device_ptr = *(void**)param_value;
-            
-            // Try to capture pre-execution state
             auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
             if (base_ptr && info) {
                 total_state_size += info->size;
                 arg_sizes.push_back(info->size);
                 device_ptrs.push_back(device_ptr);
+                exec.arg_sizes.push_back(info->size);  // Store size in execution record
             }
         }
+        exec.arg_ptrs.push_back(param_value);  // Store all argument pointers
     }
 
     // Allocate combined state buffers
     exec.pre_state = std::make_shared<MemoryState>(total_state_size);
     exec.post_state = std::make_shared<MemoryState>(total_state_size);
+
+    // Print pre-execution argument values
+    std::cout << "\nPRE-EXECUTION ARGUMENT VALUES:" << std::endl;
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        void* param_value = kernelParams[i];
+        
+        std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+        if (arg.isPointer()) {
+            void* device_ptr = *(void**)param_value;
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)";
+                if (info->shadow_copy) {
+                    std::cout << "\n    First few values: ";
+                    float* values = reinterpret_cast<float*>(info->shadow_copy.get());
+                    for (size_t j = 0; j < std::min(size_t(3), info->size/sizeof(float)); j++) {
+                        std::cout << values[j] << " ";
+                    }
+                }
+            } else {
+                std::cout << "Pointer " << device_ptr << " (not tracked)";
+            }
+        } else {
+            // For non-pointer types, print the raw value
+            if (arg.getType() == "int" || arg.getType() == "unsigned int") {
+                std::cout << *(int*)param_value;
+            } else if (arg.getType() == "float") {
+                std::cout << *(float*)param_value;
+            } else if (arg.getType() == "double") {
+                std::cout << *(double*)param_value;
+            } else {
+                std::cout << "Raw value at " << param_value;
+            }
+        }
+        std::cout << std::endl;
+    }
     
     // Second pass: capture pre-execution state
     size_t offset = 0;
@@ -653,6 +762,45 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                                         sharedMemBytes, stream,
                                                         kernelParams, extra);
     (void)get_real_hipDeviceSynchronize()();
+    
+    // Print post-execution argument values
+    std::cout << "\nPOST-EXECUTION ARGUMENT VALUES:" << std::endl;
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        void* param_value = kernelParams[i];
+        
+        std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+        if (arg.isPointer()) {
+            void* device_ptr = *(void**)param_value;
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)";
+                // Create fresh shadow copy to get current values
+                createShadowCopy(base_ptr, *info);
+                if (info->shadow_copy) {
+                    std::cout << "\n    First few values: ";
+                    float* values = reinterpret_cast<float*>(info->shadow_copy.get());
+                    for (size_t j = 0; j < std::min(size_t(3), info->size/sizeof(float)); j++) {
+                        std::cout << values[j] << " ";
+                    }
+                }
+            } else {
+                std::cout << "Pointer " << device_ptr << " (not tracked)";
+            }
+        } else {
+            // For non-pointer types, print the raw value (these shouldn't change)
+            if (arg.getType() == "int" || arg.getType() == "unsigned int") {
+                std::cout << *(int*)param_value;
+            } else if (arg.getType() == "float") {
+                std::cout << *(float*)param_value;
+            } else if (arg.getType() == "double") {
+                std::cout << *(double*)param_value;
+            } else {
+                std::cout << "Raw value at " << param_value;
+            }
+        }
+        std::cout << std::endl;
+    }
     
     // Capture post-execution state
     std::cout << "DEBUG: Capturing post-execution state..." << std::endl;
@@ -716,15 +864,13 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
     op.size = sizeBytes;
     op.kind = kind;
     op.stream = stream;
-    op.execution_order = op_count++;
 
     // For device-to-host or device-to-device copies, capture pre-state
     if (kind == hipMemcpyDeviceToHost || kind == hipMemcpyDeviceToDevice) {
         auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(const_cast<void*>(src));
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
-            op.pre_state = std::make_shared<MemoryState>(
-                info->shadow_copy.get(), info->size);
+            op.pre_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
         }
     }
 
@@ -739,8 +885,7 @@ hipError_t hipMemcpyAsync(void* dst, const void* src, size_t sizeBytes,
         auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
         if (base_ptr && info) {
             createShadowCopy(base_ptr, *info);
-            op.post_state = std::make_shared<MemoryState>(
-                info->shadow_copy.get(), info->size);
+            op.post_state = std::make_shared<MemoryState>(info->shadow_copy.get(), info->size);
         }
     }
 

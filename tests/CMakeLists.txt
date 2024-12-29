@@ -4,6 +4,7 @@ add_executable(unit_tests
   testKernelManager.cpp 
   testCodeGen.cpp
   testComparator.cpp
+  testInterceptor.cpp
 )
 
 target_link_libraries(unit_tests
