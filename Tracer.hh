@@ -44,12 +44,19 @@ public:
         std::unique_ptr<char[]> data;
         size_t size;
         
-        MemoryChunk(size_t s, bool init_to_zero = true) : data(new char[s]), size(s) {
+        MemoryChunk(size_t s, bool init_to_zero = true) : size(s) {
+            // Allocate memory with proper alignment for vector types
+            size_t aligned_size = ((s + 15) / 16) * 16;  // Align to 16 bytes for float4/vec4
+            data = std::make_unique<char[]>(aligned_size);
             if (init_to_zero) {
-                std::memset(data.get(), 0, s);  // Initialize to zeros only if requested
+                std::memset(data.get(), 0, aligned_size);
             }
         }
-        MemoryChunk(const char* src, size_t s) : data(new char[s]), size(s) {
+        
+        MemoryChunk(const char* src, size_t s) : size(s) {
+            // Allocate memory with proper alignment for vector types
+            size_t aligned_size = ((s + 15) / 16) * 16;  // Align to 16 bytes for float4/vec4
+            data = std::make_unique<char[]>(aligned_size);
             std::memcpy(data.get(), src, s);
         }
     };
@@ -61,15 +68,18 @@ public:
     std::unique_ptr<char[]> getData() const {
         if (total_size == 0) return nullptr;
         
+        // Calculate aligned size
+        size_t aligned_size = ((total_size + 15) / 16) * 16;  // Align to 16 bytes for float4/vec4
+        
         // If there's only one chunk, return a copy of it
         if (chunks.size() == 1) {
-            auto result = std::make_unique<char[]>(chunks[0].size);
+            auto result = std::make_unique<char[]>(aligned_size);
             std::memcpy(result.get(), chunks[0].data.get(), chunks[0].size);
             return result;
         }
         
         // Otherwise combine all chunks into contiguous memory
-        auto result = std::make_unique<char[]>(total_size);
+        auto result = std::make_unique<char[]>(aligned_size);
         size_t offset = 0;
         for (const auto& chunk : chunks) {
             std::memcpy(result.get() + offset, chunk.data.get(), chunk.size);
@@ -81,8 +91,8 @@ public:
     void captureGpuMemory(void* ptr, size_t capture_size) {
         if (!ptr || capture_size == 0) return;
         
-        // Create a new chunk
-        MemoryChunk chunk(capture_size);
+        // Create a new chunk without initializing to zero
+        MemoryChunk chunk(capture_size, false);
         
         // Copy from GPU to the chunk using the real hipMemcpy function
         hipError_t err = get_real_hipMemcpy()(chunk.data.get(), ptr, capture_size, hipMemcpyDeviceToHost);
@@ -92,16 +102,22 @@ public:
         }
         
         // Add chunk to vector and update total size
-        total_size += capture_size;
+        total_size += capture_size;  // Use original size for total
         chunks.push_back(std::move(chunk));
     }
 
     void captureHostMemory(void* ptr, size_t capture_size) {
         if (!ptr || capture_size == 0) return;
         
-        // Create and add new chunk
-        chunks.emplace_back(static_cast<char*>(ptr), capture_size);
-        total_size += capture_size;
+        // Create a new chunk without initializing to zero
+        MemoryChunk chunk(capture_size, false);
+        
+        // Copy the host memory with proper alignment
+        std::memcpy(chunk.data.get(), ptr, capture_size);
+        
+        // Add chunk to vector and update total size
+        total_size += capture_size;  // Use original size for total
+        chunks.push_back(std::move(chunk));
     }
     
     explicit MemoryState(size_t s = 0) : total_size(0) {
