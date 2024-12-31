@@ -68,10 +68,6 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
 
     // Create temporary trace files
     {
-        // First ensure any existing files are removed
-        std::filesystem::remove(trace_file);
-        std::filesystem::remove(new_trace_file);
-        
         Tracer tracer1(trace_file);
         Tracer tracer2(trace_file);
         num_ops = tracer1.getNumOperations();
@@ -156,10 +152,6 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
 
     // Create temporary trace files
     {
-        // First ensure any existing files are removed
-        std::filesystem::remove(trace_file);
-        std::filesystem::remove(new_trace_file);
-        
         Tracer tracer1(trace_file);
         Tracer tracer2(trace_file);
         

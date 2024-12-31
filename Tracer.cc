@@ -34,13 +34,12 @@ void Tracer::initializeTraceFile() {
     initialized_ = true;
 }
 
-void Tracer::finalizeTrace() {
+void Tracer::finalizeTrace(std::string final_trace_path) {
     if (!initialized_) return;
-    
+
     std::cout << "Finalizing trace with " << kernel_manager_.getNumKernels() << " kernels" << std::endl;
     
     // Create a new file for the final trace
-    std::string final_trace_path = file_path + ".final";
     std::ofstream final_trace(final_trace_path, std::ios::binary);
     if (!final_trace) {
         std::cerr << "Failed to create final trace file: " << final_trace_path << std::endl;

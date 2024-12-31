@@ -719,11 +719,11 @@ public:
         std::cout << "Tracer destructor called" << std::endl; 
         if (serialize_trace_) {
             std::cout << "Serializing trace" << std::endl;
-            finalizeTrace();
+            finalizeTrace(file_path + ".final");
         }
     }
     
-    void finalizeTrace();
+    void finalizeTrace(std::string final_trace_path = "");
 
     friend std::ostream& operator<<(std::ostream& os, const Tracer& tracer) {
         os << "Tracer: " << std::endl;
