@@ -44,7 +44,11 @@ public:
         std::unique_ptr<char[]> data;
         size_t size;
         
-        MemoryChunk(size_t s) : data(new char[s]), size(s) {}
+        MemoryChunk(size_t s, bool init_to_zero = true) : data(new char[s]), size(s) {
+            if (init_to_zero) {
+                std::memset(data.get(), 0, s);  // Initialize to zeros only if requested
+            }
+        }
         MemoryChunk(const char* src, size_t s) : data(new char[s]), size(s) {
             std::memcpy(data.get(), src, s);
         }
@@ -188,7 +192,8 @@ public:
         // Create state and read all data into a single chunk
         MemoryState state;
         if (total_size > 0) {
-            state.chunks.emplace_back(total_size);
+            // Don't initialize to zero since we'll read data from file
+            state.chunks.emplace_back(total_size, false);
             file.read(state.chunks.back().data.get(), total_size);
             state.total_size = total_size;
         }

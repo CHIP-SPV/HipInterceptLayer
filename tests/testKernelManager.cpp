@@ -397,15 +397,19 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
     auto pre_state = std::make_shared<MemoryState>(1024);  // 1KB pre state
     auto post_state = std::make_shared<MemoryState>(2048); // 2KB post state
 
-    // Initialize data
+    // Initialize data with patterns
     {
-        auto pre_data = pre_state->getData();
-        auto post_data = post_state->getData();
+        // Initialize pre-state data directly in the chunk
+        char* pre_data = pre_state->chunks[0].data.get();
         for (size_t i = 0; i < 1024; i++) {
-            pre_data.get()[i] = static_cast<char>(i & 0xFF);
+            pre_data[i] = static_cast<char>(i & 0xFF);
         }
+    }
+    {
+        // Initialize post-state data directly in the chunk
+        char* post_data = post_state->chunks[0].data.get();
         for (size_t i = 0; i < 2048; i++) {
-            post_data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+            post_data[i] = static_cast<char>((i * 2) & 0xFF);
         }
     }
 
