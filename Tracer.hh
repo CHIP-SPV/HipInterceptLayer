@@ -47,18 +47,54 @@ public:
         MemoryChunk(size_t s, bool init_to_zero = true) : size(s) {
             // Allocate memory with proper alignment for vector types
             size_t aligned_size = ((s + 15) / 16) * 16;  // Align to 16 bytes for float4/vec4
-            data = std::make_unique<char[]>(aligned_size);
+            
+            // Use aligned_alloc for proper alignment
+            void* aligned_ptr = nullptr;
+            if (posix_memalign(&aligned_ptr, 16, aligned_size) != 0) {
+                throw std::runtime_error("Failed to allocate aligned memory");
+            }
+            
+            // Transfer ownership to unique_ptr with custom deleter
+            data = std::unique_ptr<char[]>(static_cast<char*>(aligned_ptr));
+            
             if (init_to_zero) {
                 std::memset(data.get(), 0, aligned_size);
             }
         }
         
         MemoryChunk(const char* src, size_t s) : size(s) {
-            // Allocate memory with proper alignment for vector types
-            size_t aligned_size = ((s + 15) / 16) * 16;  // Align to 16 bytes for float4/vec4
-            data = std::make_unique<char[]>(aligned_size);
+            // Allocate aligned memory
+            size_t aligned_size = ((s + 15) / 16) * 16;
+            
+            void* aligned_ptr = nullptr;
+            if (posix_memalign(&aligned_ptr, 16, aligned_size) != 0) {
+                throw std::runtime_error("Failed to allocate aligned memory");
+            }
+            
+            // Transfer ownership and copy data
+            data = std::unique_ptr<char[]>(static_cast<char*>(aligned_ptr));
             std::memcpy(data.get(), src, s);
         }
+        
+        // Add move constructor
+        MemoryChunk(MemoryChunk&& other) noexcept 
+            : data(std::move(other.data)), size(other.size) {
+            other.size = 0;
+        }
+        
+        // Add move assignment
+        MemoryChunk& operator=(MemoryChunk&& other) noexcept {
+            if (this != &other) {
+                data = std::move(other.data);
+                size = other.size;
+                other.size = 0;
+            }
+            return *this;
+        }
+        
+        // Delete copy operations
+        MemoryChunk(const MemoryChunk&) = delete;
+        MemoryChunk& operator=(const MemoryChunk&) = delete;
     };
     
     std::vector<MemoryChunk> chunks;
@@ -91,32 +127,75 @@ public:
     void captureGpuMemory(void* ptr, size_t capture_size) {
         if (!ptr || capture_size == 0) return;
         
-        // Create a new chunk without initializing to zero
-        MemoryChunk chunk(capture_size, false);
-        
-        // Copy from GPU to the chunk using the real hipMemcpy function
-        hipError_t err = get_real_hipMemcpy()(chunk.data.get(), ptr, capture_size, hipMemcpyDeviceToHost);
+        // Ensure GPU operations are complete
+        hipError_t err = hipDeviceSynchronize();
         if (err != hipSuccess) {
-            std::cerr << "Failed to capture GPU memory at " << ptr << " of size " << capture_size << std::endl;
+            std::cerr << "Failed to synchronize device before memory capture: " 
+                      << hipGetErrorString(err) << std::endl;
             return;
         }
         
-        // Add chunk to vector and update total size
-        total_size += capture_size;  // Use original size for total
+        // Create a new chunk with proper alignment
+        MemoryChunk chunk(capture_size, false);
+        
+        // Get the real hipMemcpy function
+        hipMemcpy_fn real_memcpy = get_real_hipMemcpy();
+        if (!real_memcpy) {
+            std::cerr << "Failed to get real hipMemcpy function" << std::endl;
+            return;
+        }
+        
+        // Copy from GPU to the chunk
+        err = real_memcpy(chunk.data.get(), ptr, capture_size, hipMemcpyDeviceToHost);
+        if (err != hipSuccess) {
+            std::cerr << "Failed to capture GPU memory at " << ptr 
+                      << " of size " << capture_size 
+                      << ": " << hipGetErrorString(err) << std::endl;
+            return;
+        }
+        
+        // Debug: Print first few values for float4
+        if (capture_size % sizeof(float4) == 0) {
+            float4* float4_data = reinterpret_cast<float4*>(chunk.data.get());
+            std::cout << "Captured GPU memory at " << ptr << " size: " << capture_size 
+                      << " (float4 array)" << std::endl;
+            for (size_t i = 0; i < std::min(size_t(2), capture_size/sizeof(float4)); i++) {
+                std::cout << "Value[" << i << "]: ("
+                          << float4_data[i].x << ", "
+                          << float4_data[i].y << ", "
+                          << float4_data[i].z << ", "
+                          << float4_data[i].w << ")" << std::endl;
+            }
+        }
+        
+        total_size += capture_size;
         chunks.push_back(std::move(chunk));
     }
 
     void captureHostMemory(void* ptr, size_t capture_size) {
         if (!ptr || capture_size == 0) return;
         
-        // Create a new chunk without initializing to zero
+        // Create a new chunk with proper alignment
         MemoryChunk chunk(capture_size, false);
         
-        // Copy the host memory with proper alignment
+        // Copy the host memory
         std::memcpy(chunk.data.get(), ptr, capture_size);
         
-        // Add chunk to vector and update total size
-        total_size += capture_size;  // Use original size for total
+        // Debug: Print first few values for float4
+        if (capture_size % sizeof(float4) == 0) {
+            float4* float4_data = reinterpret_cast<float4*>(chunk.data.get());
+            std::cout << "Captured Host memory at " << ptr << " size: " << capture_size 
+                      << " (float4 array)" << std::endl;
+            for (size_t i = 0; i < std::min(size_t(2), capture_size/sizeof(float4)); i++) {
+                std::cout << "Value[" << i << "]: ("
+                          << float4_data[i].x << ", "
+                          << float4_data[i].y << ", "
+                          << float4_data[i].z << ", "
+                          << float4_data[i].w << ")" << std::endl;
+            }
+        }
+        
+        total_size += capture_size;
         chunks.push_back(std::move(chunk));
     }
     
