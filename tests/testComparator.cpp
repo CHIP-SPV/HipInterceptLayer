@@ -25,16 +25,20 @@ TEST_F(ComparatorTest, IdenticalTracesCompareEqual) {
         kernel.block_dim = {256, 1, 1};
         kernel.shared_mem = 0;
         
-        // Initialize memory states
+        // Create and initialize memory states
         auto pre_state = std::make_shared<MemoryState>(1024);  // 1KB pre state
         auto post_state = std::make_shared<MemoryState>(2048); // 2KB post state
         
         // Fill with recognizable patterns
-        for (size_t i = 0; i < 1024; i++) {
-            pre_state->data.get()[i] = static_cast<char>(i & 0xFF);
-        }
-        for (size_t i = 0; i < 2048; i++) {
-            post_state->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+        {
+            auto pre_data = pre_state->getData();
+            auto post_data = post_state->getData();
+            for (size_t i = 0; i < 1024; i++) {
+                pre_data.get()[i] = static_cast<char>(i & 0xFF);
+            }
+            for (size_t i = 0; i < 2048; i++) {
+                post_data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+            }
         }
         
         kernel.pre_state = pre_state;
@@ -90,11 +94,15 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
         auto post_state1 = std::make_shared<MemoryState>(2048); // 2KB post state
         
         // Fill with recognizable patterns
-        for (size_t i = 0; i < 1024; i++) {
-            pre_state1->data.get()[i] = static_cast<char>(i & 0xFF);
-        }
-        for (size_t i = 0; i < 2048; i++) {
-            post_state1->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+        {
+            auto pre_data = pre_state1->getData();
+            auto post_data = post_state1->getData();
+            for (size_t i = 0; i < 1024; i++) {
+                pre_data.get()[i] = static_cast<char>(i & 0xFF);
+            }
+            for (size_t i = 0; i < 2048; i++) {
+                post_data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+            }
         }
         
         kernel1.pre_state = pre_state1;
@@ -105,11 +113,15 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
         auto post_state2 = std::make_shared<MemoryState>(2048); // 2KB post state
         
         // Fill with different patterns
-        for (size_t i = 0; i < 1024; i++) {
-            pre_state2->data.get()[i] = static_cast<char>((i * 3) & 0xFF);
-        }
-        for (size_t i = 0; i < 2048; i++) {
-            post_state2->data.get()[i] = static_cast<char>((i * 4) & 0xFF);
+        {
+            auto pre_data = pre_state2->getData();
+            auto post_data = post_state2->getData();
+            for (size_t i = 0; i < 1024; i++) {
+                pre_data.get()[i] = static_cast<char>((i * 3) & 0xFF);
+            }
+            for (size_t i = 0; i < 2048; i++) {
+                post_data.get()[i] = static_cast<char>((i * 4) & 0xFF);
+            }
         }
         
         kernel2.pre_state = pre_state2;
@@ -167,9 +179,13 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
         auto post_state1 = std::make_shared<MemoryState>(1024); // Same size post state
         
         // Fill with recognizable patterns
-        for (size_t i = 0; i < 1024; i++) {
-            pre_state1->data.get()[i] = static_cast<char>(i & 0xFF);
-            post_state1->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+        {
+            auto pre_data = pre_state1->getData();
+            auto post_data = post_state1->getData();
+            for (size_t i = 0; i < 1024; i++) {
+                pre_data.get()[i] = static_cast<char>(i & 0xFF);
+                post_data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+            }
         }
         
         mem1.pre_state = pre_state1;
@@ -180,9 +196,13 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
         auto post_state2 = std::make_shared<MemoryState>(2048); // Same size post state
         
         // Fill with different patterns
-        for (size_t i = 0; i < 2048; i++) {
-            pre_state2->data.get()[i] = static_cast<char>((i * 3) & 0xFF);
-            post_state2->data.get()[i] = static_cast<char>((i * 4) & 0xFF);
+        {
+            auto pre_data = pre_state2->getData();
+            auto post_data = post_state2->getData();
+            for (size_t i = 0; i < 2048; i++) {
+                pre_data.get()[i] = static_cast<char>((i * 3) & 0xFF);
+                post_data.get()[i] = static_cast<char>((i * 4) & 0xFF);
+            }
         }
         
         mem2.pre_state = pre_state2;
@@ -240,15 +260,17 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
                             sizeof(HIP_vector_type<float, 4>) + 
                             sizeof(HIP_vector_type<float, 2>));
     
-    std::cout << "Pre-state size: " << kernel->pre_state->size << std::endl;
-    std::cout << "Post-state size: " << kernel->post_state->size << std::endl;
+    std::cout << "Pre-state size: " << kernel->pre_state->total_size << std::endl;
+    std::cout << "Post-state size: " << kernel->post_state->total_size << std::endl;
     
-    EXPECT_EQ(kernel->pre_state->size, total_size);
-    EXPECT_EQ(kernel->post_state->size, total_size);
+    EXPECT_EQ(kernel->pre_state->total_size, total_size);
+    EXPECT_EQ(kernel->post_state->total_size, total_size);
     
-    // Get pointers to the different array types in pre and post states
-    float* pre_scalar = reinterpret_cast<float*>(kernel->pre_state->data.get());
-    float* post_scalar = reinterpret_cast<float*>(kernel->post_state->data.get());
+    // Get the data for comparison
+    auto pre_data = kernel->pre_state->getData();
+    auto post_data = kernel->post_state->getData();
+    float* pre_scalar = reinterpret_cast<float*>(pre_data.get());
+    float* post_scalar = reinterpret_cast<float*>(post_data.get());
     
     auto* pre_vec4 = reinterpret_cast<HIP_vector_type<float, 4>*>(pre_scalar + N);
     auto* post_vec4 = reinterpret_cast<HIP_vector_type<float, 4>*>(post_scalar + N);

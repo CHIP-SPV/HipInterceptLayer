@@ -56,8 +56,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(scalar_d2h_op->size, N * sizeof(float)) << "Incorrect scalar array size";
     
     // Get pre and post state data for scalar array
-    const float* pre_scalar = reinterpret_cast<const float*>(scalar_h2d_op->pre_state->data.get());
-    const float* post_scalar = reinterpret_cast<const float*>(scalar_d2h_op->post_state->data.get());
+    const float* pre_scalar = reinterpret_cast<const float*>(scalar_h2d_op->pre_state->getData().get());
+    const float* post_scalar = reinterpret_cast<const float*>(scalar_d2h_op->post_state->getData().get());
     
     // Verify scalar array values
     for (size_t i = 0; i < N; i++) {
@@ -87,8 +87,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(vec4_d2h_op->size, N * sizeof(HIP_vector_type<float, 4>)) << "Incorrect vec4 array size";
     
     // Get pre and post state data for vec4 array
-    const HIP_vector_type<float, 4>* pre_vec4 = reinterpret_cast<const HIP_vector_type<float, 4>*>(vec4_h2d_op->pre_state->data.get());
-    const HIP_vector_type<float, 4>* post_vec4 = reinterpret_cast<const HIP_vector_type<float, 4>*>(vec4_d2h_op->post_state->data.get());
+    const HIP_vector_type<float, 4>* pre_vec4 = reinterpret_cast<const HIP_vector_type<float, 4>*>(vec4_h2d_op->pre_state->getData().get());
+    const HIP_vector_type<float, 4>* post_vec4 = reinterpret_cast<const HIP_vector_type<float, 4>*>(vec4_d2h_op->post_state->getData().get());
     
     // Verify vec4 array values
     for (size_t i = 0; i < N; i++) {
@@ -120,8 +120,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(vec2_d2h_op->size, N * sizeof(HIP_vector_type<float, 2>)) << "Incorrect vec2 array size";
     
     // Get pre and post state data for vec2 array
-    const HIP_vector_type<float, 2>* pre_vec2 = reinterpret_cast<const HIP_vector_type<float, 2>*>(vec2_h2d_op->pre_state->data.get());
-    const HIP_vector_type<float, 2>* post_vec2 = reinterpret_cast<const HIP_vector_type<float, 2>*>(vec2_d2h_op->post_state->data.get());
+    const HIP_vector_type<float, 2>* pre_vec2 = reinterpret_cast<const HIP_vector_type<float, 2>*>(vec2_h2d_op->pre_state->getData().get());
+    const HIP_vector_type<float, 2>* post_vec2 = reinterpret_cast<const HIP_vector_type<float, 2>*>(vec2_d2h_op->post_state->getData().get());
     
     // Verify vec2 array values
     for (size_t i = 0; i < N; i++) {
@@ -149,8 +149,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(float4_d2h_op->size, N * sizeof(float4)) << "Incorrect float4 array size";
     
     // Get pre and post state data for float4 array
-    const float4* pre_float4 = reinterpret_cast<const float4*>(float4_h2d_op->pre_state->data.get());
-    const float4* post_float4 = reinterpret_cast<const float4*>(float4_d2h_op->post_state->data.get());
+    const float4* pre_float4 = reinterpret_cast<const float4*>(float4_h2d_op->pre_state->getData().get());
+    const float4* post_float4 = reinterpret_cast<const float4*>(float4_d2h_op->post_state->getData().get());
     
     // Verify float4 array values
     for (size_t i = 0; i < N; i++) {

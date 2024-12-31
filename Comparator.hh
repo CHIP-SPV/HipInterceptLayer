@@ -3,6 +3,8 @@
 #include "Tracer.hh"
 #include <iomanip>
 #include <chrono>
+#include <vector>
+#include <cstring>
 
 class Comparator {
 public:
@@ -65,31 +67,50 @@ public:
     Tracer tracer1;
     Tracer tracer2; 
 private:
-    bool compareOperations(const Operation& op1, const Operation& op2) const {
-        // Compare memory states if they exist
-        if (op1.pre_state && op2.pre_state) {
-            if (op1.pre_state->size != op2.pre_state->size) return false;
-            if (memcmp(op1.pre_state->data.get(), op2.pre_state->data.get(), op1.pre_state->size) != 0) return false;
-        }
-        
-        if (op1.post_state && op2.post_state) {
-            if (op1.post_state->size != op2.post_state->size) return false;
-            if (memcmp(op1.post_state->data.get(), op2.post_state->data.get(), op1.post_state->size) != 0) return false;
+    bool compareMemoryStates(const std::shared_ptr<MemoryState>& state1, 
+                               const std::shared_ptr<MemoryState>& state2) const {
+        if (!state1 || !state2) return state1 == state2;
+        if (state1->total_size != state2->total_size) return false;
+
+        // Create contiguous buffers for comparison
+        std::vector<char> buffer1(state1->total_size);
+        std::vector<char> buffer2(state2->total_size);
+
+        // Copy chunks into contiguous buffers
+        size_t offset1 = 0;
+        for (const auto& chunk : state1->chunks) {
+            std::memcpy(buffer1.data() + offset1, chunk.data.get(), chunk.size);
+            offset1 += chunk.size;
         }
 
-        // Compare specific operation types
-        if (auto* kernel1 = dynamic_cast<const KernelExecution*>(&op1)) {
-            if (auto* kernel2 = dynamic_cast<const KernelExecution*>(&op2)) {
-                return compareKernelExecutions(*kernel1, *kernel2);
-            }
+        size_t offset2 = 0;
+        for (const auto& chunk : state2->chunks) {
+            std::memcpy(buffer2.data() + offset2, chunk.data.get(), chunk.size);
+            offset2 += chunk.size;
         }
-        else if (auto* mem1 = dynamic_cast<const MemoryOperation*>(&op1)) {
-            if (auto* mem2 = dynamic_cast<const MemoryOperation*>(&op2)) {
-                return compareMemoryOperations(*mem1, *mem2);
-            }
+
+        // Compare the contiguous buffers
+        return std::memcmp(buffer1.data(), buffer2.data(), state1->total_size) == 0;
+    }
+
+    bool compareOperations(const Operation& op1, const Operation& op2) const {
+        if (op1.type != op2.type) return false;
+
+        // Compare pre-states
+        if (op1.pre_state && op2.pre_state) {
+            if (!compareMemoryStates(op1.pre_state, op2.pre_state)) return false;
+        } else if (op1.pre_state || op2.pre_state) {
+            return false;
         }
-        
-        return false;
+
+        // Compare post-states
+        if (op1.post_state && op2.post_state) {
+            if (!compareMemoryStates(op1.post_state, op2.post_state)) return false;
+        } else if (op1.post_state || op2.post_state) {
+            return false;
+        }
+
+        return true;
     }
 
     bool compareKernelExecutions(const KernelExecution& k1, const KernelExecution& k2) const {
@@ -132,19 +153,25 @@ private:
            << "), shared=" << k1.shared_mem << "\n";
 
         bool states_differ = false;
-        if (k1.pre_state && k2.pre_state && 
-            memcmp(k1.pre_state->data.get(), k2.pre_state->data.get(), k1.pre_state->size) != 0) {
-            states_differ = true;
+        if (k1.pre_state && k2.pre_state) {
+            if (!compareMemoryStates(k1.pre_state, k2.pre_state)) {
+                states_differ = true;
+            }
         }
-        if (k1.post_state && k2.post_state && 
-            memcmp(k1.post_state->data.get(), k2.post_state->data.get(), k1.post_state->size) != 0) {
-            states_differ = true;
+        if (k1.post_state && k2.post_state) {
+            if (!compareMemoryStates(k1.post_state, k2.post_state)) {
+                states_differ = true;
+            }
         }
 
         if (states_differ) {
-            os << "  Config differences: Pre-execution memory states differ";
-            if (k1.post_state && k2.post_state) {
-                os << ", Post-execution memory states differ";
+            os << "  Memory differences: ";
+            if (k1.pre_state && k2.pre_state && !compareMemoryStates(k1.pre_state, k2.pre_state)) {
+                os << "Pre-execution memory states differ";
+            }
+            if (k1.post_state && k2.post_state && !compareMemoryStates(k1.post_state, k2.post_state)) {
+                if (k1.pre_state && k2.pre_state) os << ", ";
+                os << "Post-execution memory states differ";
             }
             os << "\n";
         }

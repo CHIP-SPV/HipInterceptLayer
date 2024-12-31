@@ -396,13 +396,17 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
     // Create test memory states
     auto pre_state = std::make_shared<MemoryState>(1024);  // 1KB pre state
     auto post_state = std::make_shared<MemoryState>(2048); // 2KB post state
-    
-    // Fill with recognizable patterns
-    for (size_t i = 0; i < 1024; i++) {
-        pre_state->data.get()[i] = static_cast<char>(i & 0xFF);
-    }
-    for (size_t i = 0; i < 2048; i++) {
-        post_state->data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+
+    // Initialize data
+    {
+        auto pre_data = pre_state->getData();
+        auto post_data = post_state->getData();
+        for (size_t i = 0; i < 1024; i++) {
+            pre_data.get()[i] = static_cast<char>(i & 0xFF);
+        }
+        for (size_t i = 0; i < 2048; i++) {
+            post_data.get()[i] = static_cast<char>((i * 2) & 0xFF);
+        }
     }
 
     // Setup kernel execution parameters
@@ -458,8 +462,8 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
     std::cout << "After deserialization, kernel name: " << exec2->kernel_name << " length: " << exec2->kernel_name.length() << std::endl;
 
     // Verify states are preserved after deserialization
-    ASSERT_EQ(exec2->pre_state->size, 1024);
-    ASSERT_EQ(exec2->post_state->size, 2048);
+    ASSERT_EQ(exec2->pre_state->total_size, 1024);
+    ASSERT_EQ(exec2->post_state->total_size, 2048);
     ASSERT_EQ(exec2->function_address, function_ptr);
     ASSERT_EQ(exec2->grid_dim.x, grid.x);
     ASSERT_EQ(exec2->grid_dim.y, grid.y);
@@ -471,11 +475,21 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
     ASSERT_EQ(exec2->arg_sizes.size(), 2);
 
     // Verify data is preserved after deserialization
-    for (size_t i = 0; i < 1024; i++) {
-        ASSERT_EQ(static_cast<unsigned char>(exec2->pre_state->data.get()[i]), static_cast<unsigned char>(i & 0xFF));
-    }
-    for (size_t i = 0; i < 2048; i++) {
-        ASSERT_EQ(static_cast<unsigned char>(exec2->post_state->data.get()[i]), static_cast<unsigned char>((i * 2) & 0xFF));
+    {
+        auto pre_data = exec2->pre_state->getData();
+        auto post_data = exec2->post_state->getData();
+        
+        // Verify pre-state data
+        for (size_t i = 0; i < 1024; i++) {
+            ASSERT_EQ(static_cast<unsigned char>(pre_data.get()[i]), 
+                     static_cast<unsigned char>(i & 0xFF));
+        }
+        
+        // Verify post-state data
+        for (size_t i = 0; i < 2048; i++) {
+            ASSERT_EQ(static_cast<unsigned char>(post_data.get()[i]), 
+                     static_cast<unsigned char>((i * 2) & 0xFF));
+        }
     }
 
     // Clean up

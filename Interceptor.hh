@@ -60,7 +60,7 @@ public:
             return std::make_pair(it->first, &it->second);
         }
         std::cerr << "Allocation not found for pointer: " << ptr << std::endl;
-        return std::make_pair(nullptr, nullptr);
+        std::abort();
     }
 };
 

@@ -3,6 +3,12 @@
 #include "Types.hh"
 #include "Util.hh"
 #include "KernelManager.hh"
+#define __HIP_PLATFORM_SPIRV__
+#include <hip/hip_runtime.h>
+
+// Forward declare the real hipMemcpy function getter
+typedef hipError_t (*hipMemcpy_fn)(void *, const void *, size_t, hipMemcpyKind);
+hipMemcpy_fn get_real_hipMemcpy();
 
 #ifndef HIP_INTERCEPT_LAYER_TRACER_HH
 #define HIP_INTERCEPT_LAYER_TRACER_HH
@@ -34,73 +40,128 @@ public:
     static constexpr uint32_t MAGIC_START = 0x4D454D53; // 'MEMS'
     static constexpr uint32_t MAGIC_END = 0x454D454D;   // 'EMEM'
     
-    std::unique_ptr<char[]> data;
-    size_t size;
+    struct MemoryChunk {
+        std::unique_ptr<char[]> data;
+        size_t size;
+        
+        MemoryChunk(size_t s) : data(new char[s]), size(s) {}
+        MemoryChunk(const char* src, size_t s) : data(new char[s]), size(s) {
+            std::memcpy(data.get(), src, s);
+        }
+    };
     
-    explicit MemoryState(size_t s) : data(new char[s]), size(s) {}
-    MemoryState(const char* src, size_t s) : data(new char[s]), size(s) {
-        memcpy(data.get(), src, s);
+    std::vector<MemoryChunk> chunks;
+    size_t total_size;
+
+    // Helper method to get contiguous data for testing
+    std::unique_ptr<char[]> getData() const {
+        if (total_size == 0) return nullptr;
+        
+        // If there's only one chunk, return a copy of it
+        if (chunks.size() == 1) {
+            auto result = std::make_unique<char[]>(chunks[0].size);
+            std::memcpy(result.get(), chunks[0].data.get(), chunks[0].size);
+            return result;
+        }
+        
+        // Otherwise combine all chunks into contiguous memory
+        auto result = std::make_unique<char[]>(total_size);
+        size_t offset = 0;
+        for (const auto& chunk : chunks) {
+            std::memcpy(result.get() + offset, chunk.data.get(), chunk.size);
+            offset += chunk.size;
+        }
+        return result;
     }
-    MemoryState() : size(0) {}
+
+    void captureGpuMemory(void* ptr, size_t capture_size) {
+        if (!ptr || capture_size == 0) return;
+        
+        // Create a new chunk
+        MemoryChunk chunk(capture_size);
+        
+        // Copy from GPU to the chunk using the real hipMemcpy function
+        hipError_t err = get_real_hipMemcpy()(chunk.data.get(), ptr, capture_size, hipMemcpyDeviceToHost);
+        if (err != hipSuccess) {
+            std::cerr << "Failed to capture GPU memory at " << ptr << " of size " << capture_size << std::endl;
+            return;
+        }
+        
+        // Add chunk to vector and update total size
+        total_size += capture_size;
+        chunks.push_back(std::move(chunk));
+    }
+
+    void captureHostMemory(void* ptr, size_t capture_size) {
+        if (!ptr || capture_size == 0) return;
+        
+        // Create and add new chunk
+        chunks.emplace_back(static_cast<char*>(ptr), capture_size);
+        total_size += capture_size;
+    }
+    
+    explicit MemoryState(size_t s = 0) : total_size(0) {
+        if (s > 0) {
+            chunks.emplace_back(s);
+            total_size = s;
+        }
+    }
+
+    MemoryState(const char* src, size_t s) : total_size(s) {
+        if (s > 0) {
+            chunks.emplace_back(src, s);
+        }
+    }
     
     // Add copy constructor
-    MemoryState(const MemoryState& other) : size(other.size) {
-        if (other.data) {
-            data = std::make_unique<char[]>(size);
-            std::memcpy(data.get(), other.data.get(), size);
+    MemoryState(const MemoryState& other) : total_size(other.total_size) {
+        chunks.reserve(other.chunks.size());
+        for (const auto& chunk : other.chunks) {
+            chunks.emplace_back(chunk.data.get(), chunk.size);
         }
     }
     
     // Add copy assignment operator
     MemoryState& operator=(const MemoryState& other) {
         if (this != &other) {
-            size = other.size;
-            if (other.data) {
-                data = std::make_unique<char[]>(size);
-                std::memcpy(data.get(), other.data.get(), size);
-            } else {
-                data.reset();
+            chunks.clear();
+            chunks.reserve(other.chunks.size());
+            for (const auto& chunk : other.chunks) {
+                chunks.emplace_back(chunk.data.get(), chunk.size);
             }
+            total_size = other.total_size;
         }
         return *this;
     }
     
     // Add move constructor
     MemoryState(MemoryState&& other) noexcept 
-        : data(std::move(other.data)), size(other.size) {
-        other.size = 0;
+        : chunks(std::move(other.chunks)), total_size(other.total_size) {
+        other.total_size = 0;
     }
     
     // Add move assignment operator
     MemoryState& operator=(MemoryState&& other) noexcept {
         if (this != &other) {
-            data = std::move(other.data);
-            size = other.size;
-            other.size = 0;
+            chunks = std::move(other.chunks);
+            total_size = other.total_size;
+            other.total_size = 0;
         }
         return *this;
     }
 
     void serialize(std::ofstream& file) const {
-        std::cout << "Serializing MemoryState of size " << size << " bytes" << std::endl;
+        std::cout << "Serializing MemoryState of total size " << total_size << " bytes" << std::endl;
+        
         // Write start magic
         file.write(reinterpret_cast<const char*>(&MAGIC_START), sizeof(MAGIC_START));
         
-        // Write size
-        file.write(reinterpret_cast<const char*>(&size), sizeof(size));
+        // Write total size
+        file.write(reinterpret_cast<const char*>(&total_size), sizeof(total_size));
         
-        // Write data if present
-        if (size > 0 && data) {
-            std::cout << "Writing " << size << " bytes of data" << std::endl;
-            // Print first few bytes for debugging
-            if (size >= 4) {
-                std::cout << "First 4 bytes: ";
-                for (size_t i = 0; i < 4; ++i) {
-                    std::cout << std::hex << static_cast<int>(data.get()[i]) << " ";
-                }
-                std::cout << std::dec << std::endl;
-            }
-            file.write(data.get(), size);
+        // Write all chunks sequentially
+        for (const auto& chunk : chunks) {
+            file.write(chunk.data.get(), chunk.size);
         }
         
         // Write end magic
@@ -119,24 +180,17 @@ public:
             throw std::runtime_error("Invalid MemoryState format");
         }
         
-        // Read size
-        size_t size;
-        file.read(reinterpret_cast<char*>(&size), sizeof(size));
-        std::cout << "Deserializing MemoryState of size " << size << " bytes" << std::endl;
+        // Read total size
+        size_t total_size;
+        file.read(reinterpret_cast<char*>(&total_size), sizeof(total_size));
+        std::cout << "Deserializing MemoryState of size " << total_size << " bytes" << std::endl;
         
-        // Create state and read data
-        MemoryState state(size);
-        if (size > 0) {
-            std::cout << "Reading " << size << " bytes of data" << std::endl;
-            file.read(state.data.get(), size);
-            // Print first few bytes for debugging
-            if (size >= 4) {
-                std::cout << "First 4 bytes: ";
-                for (size_t i = 0; i < 4; ++i) {
-                    std::cout << std::hex << static_cast<int>(state.data.get()[i]) << " ";
-                }
-                std::cout << std::dec << std::endl;
-            }
+        // Create state and read all data into a single chunk
+        MemoryState state;
+        if (total_size > 0) {
+            state.chunks.emplace_back(total_size);
+            file.read(state.chunks.back().data.get(), total_size);
+            state.total_size = total_size;
         }
         
         // Read and verify end magic
@@ -186,7 +240,7 @@ public:
     static std::shared_ptr<Operation> deserialize(std::ifstream& file);
 
     virtual void serialize(std::ofstream& file) const = 0;
-    
+
 protected:
     virtual void deserializeImpl(std::ifstream& file) = 0;
     // Add pure virtual function for stream output
