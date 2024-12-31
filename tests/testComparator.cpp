@@ -240,10 +240,10 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
     // 4 H2D copies
     // 1 kernel
     // 4 D2H copies
-    ASSERT_EQ(tracer.getNumOperations(), 13) << "Expected 13 operations in trace";
+    ASSERT_EQ(tracer.getNumOperations(), 9) << "Expected 9 operations in trace";
     
     // Get operations for the kernel and surrounding memory operations
-    auto kernel_op = tracer.getOperation(8); // kernel should be in the middle
+    auto kernel_op = tracer.getOperation(4); // kernel should be in the middle
     
     // Verify kernel execution
     ASSERT_TRUE(kernel_op->isKernel()) << "Operation is not a kernel";
