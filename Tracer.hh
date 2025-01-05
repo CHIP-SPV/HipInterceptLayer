@@ -719,7 +719,7 @@ public:
         std::cout << "Tracer destructor called" << std::endl; 
         if (serialize_trace_) {
             std::cout << "Serializing trace" << std::endl;
-            finalizeTrace(file_path + ".final");
+            finalizeTrace(file_path);
         }
     }
     

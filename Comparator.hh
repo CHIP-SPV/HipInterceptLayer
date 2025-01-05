@@ -110,6 +110,19 @@ private:
             return false;
         }
 
+        if (op1.type == OperationType::KERNEL && op2.type == OperationType::KERNEL) {
+            const KernelExecution* k1 = dynamic_cast<const KernelExecution*>(&op1);
+            const KernelExecution* k2 = dynamic_cast<const KernelExecution*>(&op2);
+            return compareKernelExecutions(*k1, *k2);
+        } else if (op1.type == OperationType::MEMORY && op2.type == OperationType::MEMORY) {
+            const MemoryOperation* m1 = dynamic_cast<const MemoryOperation*>(&op1);
+            const MemoryOperation* m2 = dynamic_cast<const MemoryOperation*>(&op2);
+            return compareMemoryOperations(*m1, *m2);
+        } else {
+            std::cout << "Comparing operations of different types" << std::endl;
+            return false;
+        }
+
         return true;
     }
 

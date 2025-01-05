@@ -63,7 +63,6 @@ TEST_F(ComparatorTest, IdenticalTracesCompareEqual) {
 
 TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
     std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    std::string new_trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-1.trace";
     int num_ops = 0;
 
     // Create temporary trace files
@@ -124,17 +123,15 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
         kernel2.post_state = post_state2;
 
         tracer1.trace_.addOperation(std::make_shared<KernelExecution>(kernel1));
-
-        tracer2.setFilePath(new_trace_file);
         tracer2.trace_.addOperation(std::make_shared<KernelExecution>(kernel2));
 
-        tracer1.finalizeTrace();
-        tracer2.finalizeTrace();
+        tracer1.finalizeTrace(trace_file + "-1");
+        tracer2.finalizeTrace(trace_file + "-2");
     }
 
     // Compare the traces
     std::stringstream output;
-    Comparator comparator(trace_file, new_trace_file);
+    Comparator comparator(trace_file + "-1", trace_file + "-2");
     // assert that number of executions increased by 1
     EXPECT_EQ(comparator.tracer1.getNumOperations(), num_ops + 1);
     EXPECT_EQ(comparator.tracer2.getNumOperations(), num_ops + 1);
@@ -142,6 +139,7 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
     
     // Verify differences were reported
     std::string result = output.str();
+    std::cout << result << std::endl;
     EXPECT_NE(result.find("Traces differ"), std::string::npos);
     EXPECT_NE(result.find("Kernel(testKernel)"), std::string::npos);
 }

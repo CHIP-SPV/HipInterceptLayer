@@ -63,10 +63,6 @@ void Tracer::finalizeTrace(std::string final_trace_path) {
     final_trace.close();
     trace_file_.close();
     
-    // Replace original with final
-    std::cout << "Replacing " << file_path << " with " << final_trace_path << std::endl;
-    std::filesystem::rename(final_trace_path, file_path);
-    
     std::cout << "\n\nTrace finalized successfully with # of operations: " << trace_.operations.size() << std::endl;
     // kernel_manager_ << std::cout;
     initialized_ = false;
