@@ -33,12 +33,30 @@ hipMemcpy_fn get_real_hipMemcpy();
 #include <algorithm>
 #include <regex>
 #include <fstream>
+#include <iomanip>
 
 // Memory state tracking
 class MemoryState {
 public:
     static constexpr uint32_t MAGIC_START = 0x4D454D53; // 'MEMS'
     static constexpr uint32_t MAGIC_END = 0x454D454D;   // 'EMEM'
+    
+    // Helper function to calculate hash of a memory region
+    std::string calculateHash(const char* data, size_t size) const {
+        if (!data || size == 0) return "0";
+        
+        // Simple but effective hash calculation
+        uint64_t hash = 14695981039346656037ULL; // FNV-1a hash
+        for (size_t i = 0; i < size; ++i) {
+            hash ^= static_cast<uint8_t>(data[i]);
+            hash *= 1099511628211ULL;
+        }
+        
+        // Convert to hex string
+        std::stringstream ss;
+        ss << "0x" << std::hex << std::setfill('0') << std::setw(16) << hash;
+        return ss.str();
+    }
     
     struct MemoryChunk {
         std::unique_ptr<char[]> data;
@@ -153,6 +171,11 @@ public:
                       << ": " << hipGetErrorString(err) << std::endl;
             return;
         }
+
+        // Calculate and print hash
+        std::string hash = calculateHash(chunk.data.get(), capture_size);
+        std::cout << "Memory region hash at " << ptr << " (size: " << capture_size 
+                  << " bytes): " << hash << std::endl;
         
         // Debug: Print first few values for float4
         if (capture_size % sizeof(float4) == 0) {
@@ -180,6 +203,11 @@ public:
         
         // Copy the host memory
         std::memcpy(chunk.data.get(), ptr, capture_size);
+
+        // Calculate and print hash
+        std::string hash = calculateHash(chunk.data.get(), capture_size);
+        std::cout << "Memory region hash at " << ptr << " (size: " << capture_size 
+                  << " bytes): " << hash << std::endl;
         
         // Debug: Print first few values for float4
         if (capture_size % sizeof(float4) == 0) {
