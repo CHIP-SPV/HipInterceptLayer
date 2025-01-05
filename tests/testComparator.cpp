@@ -26,13 +26,13 @@ TEST_F(ComparatorTest, IdenticalTracesCompareEqual) {
         kernel.shared_mem = 0;
         
         // Create and initialize memory states
-        auto pre_state = std::make_shared<MemoryState>(1024);  // 1KB pre state
-        auto post_state = std::make_shared<MemoryState>(2048); // 2KB post state
+        auto pre_state = MemoryState(1024);  // 1KB pre state
+        auto post_state = MemoryState(2048); // 2KB post state
         
         // Fill with recognizable patterns
         {
-            auto pre_data = pre_state->getData();
-            auto post_data = post_state->getData();
+            auto pre_data = pre_state.getData();
+            auto post_data = post_state.getData();
             for (size_t i = 0; i < 1024; i++) {
                 pre_data.get()[i] = static_cast<char>(i & 0xFF);
             }
@@ -54,11 +54,8 @@ TEST_F(ComparatorTest, IdenticalTracesCompareEqual) {
     // Compare the traces
     std::stringstream output;
     Comparator comparator(trace_file, trace_file);
-    comparator.compare(output);
-    
-    // Verify no differences were reported
-    std::string result = output.str();
-    EXPECT_EQ(result.find("Traces differ"), std::string::npos);
+    auto result = comparator.compare(output);
+    EXPECT_TRUE(result);
 }
 
 TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
@@ -85,13 +82,13 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
         kernel2.shared_mem = 0;
 
         // Initialize memory states for kernel1
-        auto pre_state1 = std::make_shared<MemoryState>(1024);  // 1KB pre state
-        auto post_state1 = std::make_shared<MemoryState>(2048); // 2KB post state
+        auto pre_state1 = MemoryState(1024);  // 1KB pre state
+        auto post_state1 = MemoryState(2048); // 2KB post state
         
         // Fill with recognizable patterns
         {
-            auto pre_data = pre_state1->getData();
-            auto post_data = post_state1->getData();
+            auto pre_data = pre_state1.getData();
+            auto post_data = post_state1.getData();
             for (size_t i = 0; i < 1024; i++) {
                 pre_data.get()[i] = static_cast<char>(i & 0xFF);
             }
@@ -104,13 +101,13 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
         kernel1.post_state = post_state1;
 
         // Initialize memory states for kernel2
-        auto pre_state2 = std::make_shared<MemoryState>(1024);  // 1KB pre state
-        auto post_state2 = std::make_shared<MemoryState>(2048); // 2KB post state
+        auto pre_state2 = MemoryState(1024);  // 1KB pre state
+        auto post_state2 = MemoryState(2048); // 2KB post state
         
         // Fill with different patterns
         {
-            auto pre_data = pre_state2->getData();
-            auto post_data = post_state2->getData();
+            auto pre_data = pre_state2.getData();
+            auto post_data = post_state2.getData();
             for (size_t i = 0; i < 1024; i++) {
                 pre_data.get()[i] = static_cast<char>((i * 3) & 0xFF);
             }
@@ -135,13 +132,8 @@ TEST_F(ComparatorTest, DifferentKernelConfigsReported) {
     // assert that number of executions increased by 1
     EXPECT_EQ(comparator.tracer1.getNumOperations(), num_ops + 1);
     EXPECT_EQ(comparator.tracer2.getNumOperations(), num_ops + 1);
-    comparator.compare(output);
-    
-    // Verify differences were reported
-    std::string result = output.str();
-    std::cout << result << std::endl;
-    EXPECT_NE(result.find("Traces differ"), std::string::npos);
-    EXPECT_NE(result.find("Kernel(testKernel)"), std::string::npos);
+    auto result = comparator.compare(output);
+    EXPECT_FALSE(result);
 }
 
 TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
@@ -165,13 +157,13 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
         mem2.kind = hipMemcpyHostToDevice;
         
         // Initialize memory states for mem1
-        auto pre_state1 = std::make_shared<MemoryState>(1024);  // 1KB pre state
-        auto post_state1 = std::make_shared<MemoryState>(1024); // Same size post state
+        auto pre_state1 = MemoryState(1024);  // 1KB pre state
+        auto post_state1 = MemoryState(1024); // Same size post state
         
         // Fill with recognizable patterns
         {
-            auto pre_data = pre_state1->getData();
-            auto post_data = post_state1->getData();
+            auto pre_data = pre_state1.getData();
+            auto post_data = post_state1.getData();
             for (size_t i = 0; i < 1024; i++) {
                 pre_data.get()[i] = static_cast<char>(i & 0xFF);
                 post_data.get()[i] = static_cast<char>((i * 2) & 0xFF);
@@ -182,13 +174,13 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
         mem1.post_state = post_state1;
 
         // Initialize memory states for mem2
-        auto pre_state2 = std::make_shared<MemoryState>(2048);  // 2KB pre state
-        auto post_state2 = std::make_shared<MemoryState>(2048); // Same size post state
+        auto pre_state2 = MemoryState(2048);  // 2KB pre state
+        auto post_state2 = MemoryState(2048); // Same size post state
         
         // Fill with different patterns
         {
-            auto pre_data = pre_state2->getData();
-            auto post_data = post_state2->getData();
+            auto pre_data = pre_state2.getData();
+            auto post_data = post_state2.getData();
             for (size_t i = 0; i < 2048; i++) {
                 pre_data.get()[i] = static_cast<char>((i * 3) & 0xFF);
                 post_data.get()[i] = static_cast<char>((i * 4) & 0xFF);
@@ -210,12 +202,8 @@ TEST_F(ComparatorTest, DifferentMemoryOperationsReported) {
     // Compare the traces
     std::stringstream output;
     Comparator comparator(trace_file, new_trace_file);
-    comparator.compare(output);
-    
-    // Verify differences were reported
-    std::string result = output.str();
-    EXPECT_NE(result.find("Traces differ"), std::string::npos);
-    EXPECT_NE(result.find("hipMemcpyAsync call"), std::string::npos);
+    auto result = comparator.compare(output);
+    EXPECT_FALSE(result);
 }
 
 TEST_F(ComparatorTest, VerifyStateCapture) {
@@ -240,25 +228,21 @@ TEST_F(ComparatorTest, VerifyStateCapture) {
     auto kernel = static_cast<const KernelExecution*>(kernel_op.get());
     EXPECT_EQ(kernel->kernel_name, "complexDataKernel") << "Kernel name mismatch";
     
-    // Verify kernel's pre and post states
-    ASSERT_TRUE(kernel->pre_state != nullptr) << "Pre-state is null";
-    ASSERT_TRUE(kernel->post_state != nullptr) << "Post-state is null";
-    
     // Calculate total size for all arrays
     size_t N = 3;  // Reduced from 1024 to 3
     size_t total_size = N * (sizeof(float) + sizeof(float4) + 
                             sizeof(HIP_vector_type<float, 4>) + 
                             sizeof(HIP_vector_type<float, 2>));
     
-    std::cout << "Pre-state size: " << kernel->pre_state->total_size << std::endl;
-    std::cout << "Post-state size: " << kernel->post_state->total_size << std::endl;
+    std::cout << "Pre-state size: " << kernel->pre_state.total_size << std::endl;
+    std::cout << "Post-state size: " << kernel->post_state.total_size << std::endl;
     
-    EXPECT_EQ(kernel->pre_state->total_size, total_size);
-    EXPECT_EQ(kernel->post_state->total_size, total_size);
+    EXPECT_EQ(kernel->pre_state.total_size, total_size);
+    EXPECT_EQ(kernel->post_state.total_size, total_size);
     
     // Get the data for comparison
-    auto pre_data = kernel->pre_state->getData();
-    auto post_data = kernel->post_state->getData();
+    auto pre_data = kernel->pre_state.getData();
+    auto post_data = kernel->post_state.getData();
     float* pre_scalar = reinterpret_cast<float*>(pre_data.get());
     float* post_scalar = reinterpret_cast<float*>(post_data.get());
     

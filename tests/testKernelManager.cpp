@@ -394,20 +394,20 @@ TEST_F(KernelManagerTest, HIPVectorTypeHandling) {
 
 TEST(KernelExecutionTest, MemoryStateHandling) {
     // Create test memory states
-    auto pre_state = std::make_shared<MemoryState>(1024);  // 1KB pre state
-    auto post_state = std::make_shared<MemoryState>(2048); // 2KB post state
+    auto pre_state = MemoryState(1024);  // 1KB pre state
+    auto post_state = MemoryState(2048); // 2KB post state
 
     // Initialize data with patterns
     {
         // Initialize pre-state data directly in the chunk
-        char* pre_data = pre_state->chunks[0].data.get();
+        char* pre_data = pre_state.chunks[0].data.get();
         for (size_t i = 0; i < 1024; i++) {
             pre_data[i] = static_cast<char>(i & 0xFF);
         }
     }
     {
         // Initialize post-state data directly in the chunk
-        char* post_data = post_state->chunks[0].data.get();
+        char* post_data = post_state.chunks[0].data.get();
         for (size_t i = 0; i < 2048; i++) {
             post_data[i] = static_cast<char>((i * 2) & 0xFF);
         }
@@ -466,8 +466,8 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
     std::cout << "After deserialization, kernel name: " << exec2->kernel_name << " length: " << exec2->kernel_name.length() << std::endl;
 
     // Verify states are preserved after deserialization
-    ASSERT_EQ(exec2->pre_state->total_size, 1024);
-    ASSERT_EQ(exec2->post_state->total_size, 2048);
+    ASSERT_EQ(exec2->pre_state.total_size, 1024);
+    ASSERT_EQ(exec2->post_state.total_size, 2048);
     ASSERT_EQ(exec2->function_address, function_ptr);
     ASSERT_EQ(exec2->grid_dim.x, grid.x);
     ASSERT_EQ(exec2->grid_dim.y, grid.y);
@@ -480,8 +480,8 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
 
     // Verify data is preserved after deserialization
     {
-        auto pre_data = exec2->pre_state->getData();
-        auto post_data = exec2->post_state->getData();
+        auto pre_data = exec2->pre_state.getData();
+        auto post_data = exec2->post_state.getData();
         
         // Verify pre-state data
         for (size_t i = 0; i < 1024; i++) {

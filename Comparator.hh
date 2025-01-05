@@ -14,52 +14,28 @@ public:
         tracer2.setSerializeTrace(false);
     }
 
-    void compare(std::ostream& os) const {
+    bool compare(std::ostream& os) {
         const auto& trace1 = tracer1.trace_;
         const auto& trace2 = tracer2.trace_;
 
         os << "\nTotal events to compare: " << trace1.operations.size() << "\n";
         os << "Comparing traces...\n";
 
-        auto start = std::chrono::high_resolution_clock::now();
-
-        // // Print progress bar
-        // const int bar_width = 50;
-        // int progress = 0;
-        
-        // os << "[";
-        // for (size_t i = 0; i < trace1.operations.size(); i++) {
-        //     int new_progress = static_cast<int>((i + 1) * bar_width / trace1.operations.size());
-        //     while (progress < new_progress) {
-        //         os << "=";
-        //         progress++;
-        //     }
-        //     os.flush();
-        // }
-        // os << "] 100% (" << trace1.operations.size() << "/" << trace1.operations.size() << ")\n\n";
-
-        // auto end = std::chrono::high_resolution_clock::now();
-        // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        
-        // os << "Total comparison took " << duration.count() << "ms\n";
-        
-        bool traces_differ = false;
+        auto start = std::chrono::high_resolution_clock::now();      
         size_t num_operations = std::min(trace1.operations.size(), trace2.operations.size());
         for (size_t i = 0; i < num_operations; i++) {
             auto op1 = tracer1.getOperation(i);
             auto op2 = tracer2.getOperation(i);
 
             if (!compareOperations(*op1, *op2)) {
-                if (!traces_differ) {
-                    os << "Traces differ:\n\n";
-                    traces_differ = true;
-                }
                 printOperationDifference(os, i, *op1, *op2);
+                return false;
             }
         }
+        return true;
     }
 
-    friend std::ostream& operator<<(std::ostream& os, const Comparator& comp) {
+    friend std::ostream& operator<<(std::ostream& os, Comparator& comp) {
         comp.compare(os);
         return os;
     }
@@ -67,48 +43,48 @@ public:
     Tracer tracer1;
     Tracer tracer2; 
 private:
-    bool compareMemoryStates(const std::shared_ptr<MemoryState>& state1, 
-                               const std::shared_ptr<MemoryState>& state2) const {
-        if (!state1 || !state2) return state1 == state2;
-        if (state1->total_size != state2->total_size) return false;
+    bool pre_state_differ = false;
+    bool post_state_differ = false;
+
+    bool compareMemoryStates(const MemoryState& state1, const MemoryState& state2) const {
+        if (state1.total_size != state2.total_size) return false;
 
         // Create contiguous buffers for comparison
-        std::vector<char> buffer1(state1->total_size);
-        std::vector<char> buffer2(state2->total_size);
+        std::vector<char> buffer1(state1.total_size);
+        std::vector<char> buffer2(state2.total_size);
 
         // Copy chunks into contiguous buffers
         size_t offset1 = 0;
-        for (const auto& chunk : state1->chunks) {
+        for (const auto& chunk : state1.chunks) {
             std::memcpy(buffer1.data() + offset1, chunk.data.get(), chunk.size);
             offset1 += chunk.size;
         }
 
         size_t offset2 = 0;
-        for (const auto& chunk : state2->chunks) {
+        for (const auto& chunk : state2.chunks) {
             std::memcpy(buffer2.data() + offset2, chunk.data.get(), chunk.size);
             offset2 += chunk.size;
         }
 
         // Compare the contiguous buffers
-        return std::memcmp(buffer1.data(), buffer2.data(), state1->total_size) == 0;
+        return std::memcmp(buffer1.data(), buffer2.data(), state1.total_size) == 0;
     }
 
-    bool compareOperations(const Operation& op1, const Operation& op2) const {
+    bool compareOperations(const Operation& op1, const Operation& op2) {
         if (op1.type != op2.type) return false;
 
         // Compare pre-states
-        if (op1.pre_state && op2.pre_state) {
-            if (!compareMemoryStates(op1.pre_state, op2.pre_state)) return false;
-        } else if (op1.pre_state || op2.pre_state) {
+        if (!compareMemoryStates(op1.pre_state, op2.pre_state)) {
+            pre_state_differ = true;
             return false;
         }
 
         // Compare post-states
-        if (op1.post_state && op2.post_state) {
-            if (!compareMemoryStates(op1.post_state, op2.post_state)) return false;
-        } else if (op1.post_state || op2.post_state) {
+        if (!compareMemoryStates(op1.post_state, op2.post_state)) {
+            post_state_differ = true;
             return false;
         }
+
 
         if (op1.type == OperationType::KERNEL && op2.type == OperationType::KERNEL) {
             const KernelExecution* k1 = dynamic_cast<const KernelExecution*>(&op1);
@@ -158,6 +134,39 @@ private:
             }
         }
     }
+ 
+    void printMemoryStateDifference(std::ostream& os, const MemoryState& state1, const MemoryState& state2, int num_diffs = 3) const {
+        // First check if there are any chunks to compare
+        if (state1.chunks.empty() || state2.chunks.empty()) {
+            os << "One or both states have no data chunks\n";
+            return;
+        }
+
+        // Get the size of the first chunk from each state
+        size_t size1 = state1.chunks[0].size;
+        size_t size2 = state2.chunks[0].size;
+        
+        // Calculate how many elements we can safely compare
+        size_t max_elements = std::min(size1, size2) / sizeof(float);
+        int max_diffs = std::min(num_diffs, static_cast<int>(max_elements));
+
+        if (pre_state_differ) {
+            os << "Pre-state difference: \n";
+            for (int i = 0; i < max_diffs; i++) {
+                const float* data1 = reinterpret_cast<const float*>(state1.chunks[0].data.get());
+                const float* data2 = reinterpret_cast<const float*>(state2.chunks[0].data.get());
+                os << "  [" << i << "]: " << data1[i] << " vs " << data2[i] << "\n";
+            }
+        }
+        if (post_state_differ) {
+            os << "Post-state difference: \n";
+            for (int i = 0; i < max_diffs; i++) {
+                const float* data1 = reinterpret_cast<const float*>(state1.chunks[0].data.get());
+                const float* data2 = reinterpret_cast<const float*>(state2.chunks[0].data.get());
+                os << "  [" << i << "]: " << data1[i] << " vs " << data2[i] << "\n";
+            }
+        }
+    }
 
     void printKernelDifference(std::ostream& os, size_t index, const KernelExecution& k1, const KernelExecution& k2) const {
         os << "Op#" << index << ": Kernel(" << k1.kernel_name << ")\n";
@@ -165,29 +174,8 @@ private:
            << "), blockDim=(" << k1.block_dim.x << "," << k1.block_dim.y << "," << k1.block_dim.z 
            << "), shared=" << k1.shared_mem << "\n";
 
-        bool states_differ = false;
-        if (k1.pre_state && k2.pre_state) {
-            if (!compareMemoryStates(k1.pre_state, k2.pre_state)) {
-                states_differ = true;
-            }
-        }
-        if (k1.post_state && k2.post_state) {
-            if (!compareMemoryStates(k1.post_state, k2.post_state)) {
-                states_differ = true;
-            }
-        }
-
-        if (states_differ) {
-            os << "  Memory differences: ";
-            if (k1.pre_state && k2.pre_state && !compareMemoryStates(k1.pre_state, k2.pre_state)) {
-                os << "Pre-execution memory states differ";
-            }
-            if (k1.post_state && k2.post_state && !compareMemoryStates(k1.post_state, k2.post_state)) {
-                if (k1.pre_state && k2.pre_state) os << ", ";
-                os << "Post-execution memory states differ";
-            }
-            os << "\n";
-        }
+        printMemoryStateDifference(os, k1.pre_state, k2.pre_state);
+        printMemoryStateDifference(os, k1.post_state, k2.post_state);
     }
 
     void printMemoryDifference(std::ostream& os, size_t index, const MemoryOperation& m1, const MemoryOperation& m2) const {

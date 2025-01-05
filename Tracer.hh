@@ -319,8 +319,8 @@ enum class OperationType : uint32_t {
 
 class Operation {
 public:
-    std::shared_ptr<MemoryState> pre_state;
-    std::shared_ptr<MemoryState> post_state;
+    MemoryState pre_state;
+    MemoryState post_state;
     OperationType type;
 
     bool isKernel() const { return type == OperationType::KERNEL; }
@@ -332,10 +332,10 @@ public:
     // Make this a friend function instead of a member function
     friend std::ostream& operator<<(std::ostream& os, const Operation& op);
 
-    Operation(std::shared_ptr<MemoryState> pre_state, std::shared_ptr<MemoryState> post_state, OperationType type)
+    Operation(MemoryState pre_state, MemoryState post_state, OperationType type)
         : pre_state(pre_state), post_state(post_state), type(type) {}
 
-    Operation() : pre_state(nullptr), post_state(nullptr) {}
+    Operation() : pre_state(), post_state() {}
 
     static std::shared_ptr<Operation> deserialize(std::ifstream& file);
 
@@ -365,7 +365,7 @@ class KernelExecution : public Operation {
     std::vector<size_t> arg_sizes;  // Sizes of pointer arguments
     
     // Add default constructor
-    KernelExecution() : Operation(nullptr, nullptr, OperationType::KERNEL), 
+    KernelExecution() : Operation(MemoryState(), MemoryState(), OperationType::KERNEL), 
         function_address(nullptr),
         kernel_name(),
         grid_dim(),
@@ -375,8 +375,8 @@ class KernelExecution : public Operation {
     }
 
     // Existing constructor
-    KernelExecution(std::shared_ptr<MemoryState> pre_state, 
-                   std::shared_ptr<MemoryState> post_state,
+    KernelExecution(MemoryState pre_state, 
+                   MemoryState post_state,
                    void* function_address,
                    std::string kernel_name,
                    dim3 grid_dim,
@@ -397,8 +397,8 @@ class KernelExecution : public Operation {
         os << "KernelExecution: " << kernel_name 
            << " (grid: " << grid_dim.x << "," << grid_dim.y << "," << grid_dim.z
            << ") (block: " << block_dim.x << "," << block_dim.y << "," << block_dim.z
-           << ") pre_state: " << (pre_state ? "present" : "null")
-           << " post_state: " << (post_state ? "present" : "null");
+           << ") pre_state: " << (pre_state.total_size > 0 ? "present" : "null")
+           << " post_state: " << (post_state.total_size > 0 ? "present" : "null");
     }
 
     virtual void serialize(std::ofstream& file) const override {
@@ -435,16 +435,16 @@ class KernelExecution : public Operation {
         }
         
         // Write memory states
-        bool has_pre_state = pre_state != nullptr;
+        bool has_pre_state = pre_state.total_size > 0;
         file.write(reinterpret_cast<const char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state->serialize(file);
+            pre_state.serialize(file);
         }
 
-        bool has_post_state = post_state != nullptr;
+        bool has_post_state = post_state.total_size > 0;
         file.write(reinterpret_cast<const char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state->serialize(file);
+            post_state.serialize(file);
         }
     }
 
@@ -514,17 +514,17 @@ class KernelExecution : public Operation {
         bool has_pre_state;
         file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+            pre_state = MemoryState::deserialize(file);
         } else {
-            pre_state = nullptr;
+            pre_state = MemoryState();
         }
 
         bool has_post_state;
         file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+            post_state = MemoryState::deserialize(file);
         } else {
-            post_state = nullptr;
+            post_state = MemoryState();
         }
     }
 
@@ -542,7 +542,7 @@ class MemoryOperation : public Operation {
     hipStream_t stream;
 
     // Add default constructor
-    MemoryOperation() : Operation(nullptr, nullptr, OperationType::MEMORY),
+    MemoryOperation() : Operation(MemoryState(), MemoryState(), OperationType::MEMORY),
         type(MemoryOpType::COPY),
         dst(nullptr),
         src(nullptr),
@@ -553,8 +553,8 @@ class MemoryOperation : public Operation {
         }
 
     // Existing constructor
-    MemoryOperation(std::shared_ptr<MemoryState> pre_state,
-                   std::shared_ptr<MemoryState> post_state,
+    MemoryOperation(MemoryState pre_state,
+                   MemoryState post_state,
                    MemoryOpType type,
                    void* dst,
                    const void* src,
@@ -596,16 +596,16 @@ class MemoryOperation : public Operation {
         file.write(reinterpret_cast<const char*>(&stream), sizeof(stream));
         
         // Write memory states
-        bool has_pre_state = pre_state != nullptr;
+        bool has_pre_state = pre_state.total_size > 0;
         file.write(reinterpret_cast<const char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state->serialize(file);
+            pre_state.serialize(file);
         }
 
-        bool has_post_state = post_state != nullptr;
+        bool has_post_state = post_state.total_size > 0;
         file.write(reinterpret_cast<const char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state->serialize(file);
+            post_state.serialize(file);
         }
     }
 
@@ -639,17 +639,17 @@ class MemoryOperation : public Operation {
         bool has_pre_state;
         file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+            pre_state = MemoryState::deserialize(file);
         } else {
-            pre_state = nullptr;
+            pre_state = MemoryState();
         }
 
         bool has_post_state;
         file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state = std::make_shared<MemoryState>(MemoryState::deserialize(file));
+            post_state = MemoryState::deserialize(file);
         } else {
-            post_state = nullptr;
+            post_state = MemoryState();
         }
     }
 };

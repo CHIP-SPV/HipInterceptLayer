@@ -133,8 +133,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(scalar_d2h_op->size, N * sizeof(float)) << "Incorrect scalar array size";
     
     // Get pre and post state data for scalar array
-    auto pre_scalar_data = scalar_h2d_op->pre_state->getData();
-    auto post_scalar_data = scalar_d2h_op->post_state->getData();
+    auto pre_scalar_data = scalar_h2d_op->pre_state.getData();
+    auto post_scalar_data = scalar_d2h_op->post_state.getData();
     ASSERT_NE(pre_scalar_data, nullptr);
     ASSERT_NE(post_scalar_data, nullptr);
     
@@ -172,8 +172,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(vec4_d2h_op->size, N * sizeof(HIP_vector_type<float, 4>)) << "Incorrect vec4 array size";
     
     // Get pre and post state data for vec4 array
-    auto pre_vec4_data = vec4_h2d_op->pre_state->getData();
-    auto post_vec4_data = vec4_d2h_op->post_state->getData();
+    auto pre_vec4_data = vec4_h2d_op->pre_state.getData();
+    auto post_vec4_data = vec4_d2h_op->post_state.getData();
     ASSERT_NE(pre_vec4_data, nullptr);
     ASSERT_NE(post_vec4_data, nullptr);
     
@@ -213,8 +213,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(vec2_d2h_op->size, N * sizeof(HIP_vector_type<float, 2>)) << "Incorrect vec2 array size";
     
     // Get pre and post state data for vec2 array
-    auto pre_vec2_data = vec2_h2d_op->pre_state->getData();
-    auto post_vec2_data = vec2_d2h_op->post_state->getData();
+    auto pre_vec2_data = vec2_h2d_op->pre_state.getData();
+    auto post_vec2_data = vec2_d2h_op->post_state.getData();
     ASSERT_NE(pre_vec2_data, nullptr);
     ASSERT_NE(post_vec2_data, nullptr);
     
@@ -250,8 +250,8 @@ TEST_F(InterceptorTest, DataVerificationTraceTest) {
     ASSERT_EQ(float4_d2h_op->size, N * sizeof(float4)) << "Incorrect float4 array size";
     
     // Get pre and post state data for float4 array
-    auto pre_float4_data = float4_h2d_op->pre_state->getData();
-    auto post_float4_data = float4_d2h_op->post_state->getData();
+    auto pre_float4_data = float4_h2d_op->pre_state.getData();
+    auto post_float4_data = float4_d2h_op->post_state.getData();
     ASSERT_NE(pre_float4_data, nullptr);
     ASSERT_NE(post_float4_data, nullptr);
     

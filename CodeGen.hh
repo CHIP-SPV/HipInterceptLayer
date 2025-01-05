@@ -305,7 +305,7 @@ private:
             
             ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << arg_size << "));\n";
 
-            if (op->pre_state) {
+            if (op->pre_state.total_size > 0) {
                 ss << "    // Load pre-execution state from trace\n";
                 ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_size 
                    << ", " << var_name << "_h)) { return 1; }\n";

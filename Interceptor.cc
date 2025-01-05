@@ -187,17 +187,13 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes,
     op.kind = kind;
     op.stream = nullptr;
 
-    // Create memory states
-    op.pre_state = std::make_shared<MemoryState>();
-    op.post_state = std::make_shared<MemoryState>();
-
     // Capture pre-copy state based on kind
     if (kind == hipMemcpyHostToDevice) {
         // For host-to-device copies, capture the host source data
-        op.pre_state->captureHostMemory(const_cast<void*>(src), sizeBytes);
+        op.pre_state.captureHostMemory(const_cast<void*>(src), sizeBytes);
     } else if (kind == hipMemcpyDeviceToHost || kind == hipMemcpyDeviceToDevice) {
         // For device-to-host or device-to-device copies, capture the device source data
-        op.pre_state->captureGpuMemory(const_cast<void*>(src), sizeBytes);
+        op.pre_state.captureGpuMemory(const_cast<void*>(src), sizeBytes);
     }
 
     // Execute the actual memory copy
@@ -206,10 +202,10 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes,
     // Capture post-copy state based on kind
     if (kind == hipMemcpyHostToDevice || kind == hipMemcpyDeviceToDevice) {
         // For host-to-device or device-to-device copies, capture the device destination data
-        op.post_state->captureGpuMemory(dst, sizeBytes);
+        op.post_state.captureGpuMemory(dst, sizeBytes);
     } else if (kind == hipMemcpyDeviceToHost) {
         // For device-to-host copies, capture the host destination data
-        op.post_state->captureHostMemory(dst, sizeBytes);
+        op.post_state.captureHostMemory(dst, sizeBytes);
     }
 
     // Record operation using Tracer
@@ -227,19 +223,15 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
     op.size = sizeBytes;
     op.value = value;
     op.stream = nullptr;
-    
-    // Create memory states
-    op.pre_state = std::make_shared<MemoryState>();
-    op.post_state = std::make_shared<MemoryState>();
-    
+
     // Capture pre-set state
-    op.pre_state->captureGpuMemory(dst, sizeBytes);
+    op.pre_state.captureGpuMemory(dst, sizeBytes);
 
     // Perform the memset
     hipError_t result = get_real_hipMemset()(dst, value, sizeBytes);
 
     // Capture post-set state
-    op.post_state->captureGpuMemory(dst, sizeBytes);
+    op.post_state.captureGpuMemory(dst, sizeBytes);
 
     // Record operation using Tracer
     Tracer::instance().recordMemoryOperation(op);
@@ -265,10 +257,6 @@ static hipError_t hipLaunchKernel_impl(const void *function_address,
     exec.shared_mem = sharedMemBytes;
     exec.stream = stream;
     
-    // Create memory states
-    exec.pre_state = std::make_shared<MemoryState>();
-    exec.post_state = std::make_shared<MemoryState>();
-
     std::cout << "\nDEBUG: Processing kernel arguments:"
               << "\n  Total args: " << kernel.getArguments().size() << std::endl;
 
@@ -289,7 +277,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address,
                 // Print pre-execution info and capture state
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
                 std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.pre_state->captureGpuMemory(device_ptr, info->size);
+                exec.pre_state.captureGpuMemory(device_ptr, info->size);
             }
         } else {
             // For non-pointer types, just print the value
@@ -324,7 +312,7 @@ static hipError_t hipLaunchKernel_impl(const void *function_address,
             if (base_ptr && info) {
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
                 std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.post_state->captureGpuMemory(device_ptr, info->size);
+                exec.post_state.captureGpuMemory(device_ptr, info->size);
             }
         }
     }
@@ -534,19 +522,8 @@ hipError_t hipMalloc(void **ptr, size_t size) {
 
     // First create the allocation info
     auto &info = Interceptor::instance().addAllocation(*ptr, size);
-
-    // Create and capture initial state
-    // op.pre_state = std::make_shared<MemoryState>(size);
-    // op.post_state = std::make_shared<MemoryState>(size);
-
-    // Capture initial state of allocated memory
-    // createShadowCopy(*ptr, info);
-    // memcpy(op.pre_state->data.get(), info.shadow_copy.get(), size);
-    // memcpy(op.post_state->data.get(), info.shadow_copy.get(), size);
-
     std::cout << "Tracking GPU allocation at " << *ptr << " of size " << size
               << std::endl;
-    // Tracer::instance().recordMemoryOperation(op);
   }
 
   return result;
@@ -622,10 +599,6 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     exec.shared_mem = sharedMemBytes;
     exec.stream = stream;
 
-    // Create memory states
-    exec.pre_state = std::make_shared<MemoryState>();
-    exec.post_state = std::make_shared<MemoryState>();
-
     std::cout << "\nDEBUG: Processing kernel arguments:"
               << "\n  Total args: " << kernel.getArguments().size() << std::endl;
 
@@ -646,7 +619,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                 // Print pre-execution info and capture state
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
                 std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.pre_state->captureGpuMemory(device_ptr, info->size);
+                exec.pre_state.captureGpuMemory(device_ptr, info->size);
             }
         } else {
             // For non-pointer types, just print the value
@@ -683,7 +656,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
             if (base_ptr && info) {
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
                 std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.post_state->captureGpuMemory(device_ptr, info->size);
+                exec.post_state.captureGpuMemory(device_ptr, info->size);
             }
         }
     }
@@ -738,7 +711,7 @@ hipError_t hipMemcpyAsync(void *dst, const void *src, size_t sizeBytes,
     if (kind == hipMemcpyDeviceToHost || kind == hipMemcpyDeviceToDevice) {
         auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(const_cast<void*>(src));
         if (base_ptr && info) {
-            op.pre_state->captureGpuMemory(const_cast<void*>(src), sizeBytes);
+            op.pre_state.captureGpuMemory(const_cast<void*>(src), sizeBytes);
         }
     }
 
@@ -752,7 +725,7 @@ hipError_t hipMemcpyAsync(void *dst, const void *src, size_t sizeBytes,
     if (kind == hipMemcpyHostToDevice || kind == hipMemcpyDeviceToDevice) {
         auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(dst);
         if (base_ptr && info) {
-            op.post_state->captureGpuMemory(dst, sizeBytes);
+            op.post_state.captureGpuMemory(dst, sizeBytes);
         }
     }
 
