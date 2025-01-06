@@ -70,6 +70,7 @@ endfunction()
 
 add_hip_trace_target(test_kernels data/test_kernels.cpp)
 add_hip_trace_target(data_verification data/data_verification.cpp)
+add_hip_trace_target(computeNonbondedRepro data/computeNonbondedRepro.cpp)
 
 add_dependencies(unit_tests run_test_kernels run_data_verification)
 gtest_discover_tests(unit_tests)
