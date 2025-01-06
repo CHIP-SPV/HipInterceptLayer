@@ -147,7 +147,6 @@ public:
         
         // Keep vector types intact (don't strip the number)
         static const std::vector<std::string> vector_types = {
-            "real4", "real3", "real2",
             "float4", "float3", "float2",
             "int4", "int3", "int2",
             "uint4", "uint3", "uint2",
