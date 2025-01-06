@@ -48,7 +48,7 @@ function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
             ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay
         COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" 
             $<TARGET_FILE:${TARGET_NAME}> > ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.log 2>&1
-        COMMAND $<TARGET_FILE:HIPInterceptCompare> ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace > ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay 2>&1
+        COMMAND $<TARGET_FILE:HIPInterceptCompare> ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace --print-vals > ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay 2>&1
         DEPENDS 
             ${TARGET_NAME}
             HIPIntercept
@@ -66,11 +66,12 @@ function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
             ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.log
             ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay
     )
+
+    add_dependencies(unit_tests run_${TARGET_NAME})
 endfunction()
 
 add_hip_trace_target(test_kernels data/test_kernels.cpp)
 add_hip_trace_target(data_verification data/data_verification.cpp)
 add_hip_trace_target(computeNonbondedRepro data/computeNonbondedRepro.cpp)
 
-add_dependencies(unit_tests run_test_kernels run_data_verification)
 gtest_discover_tests(unit_tests)

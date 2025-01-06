@@ -159,7 +159,7 @@ public:
         // Calculate and print hash
         float checksum = calculateChecksum(chunk.data.get(), capture_size);
         std::cout << "Captured GPU memory at " << ptr << " size: " << capture_size 
-                  << " checksum: " << checksum << std::endl;
+                  << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
         
         total_size += capture_size;
         chunks.push_back(std::move(chunk));
@@ -177,7 +177,7 @@ public:
         // Calculate and print hash
         float checksum = calculateChecksum(chunk.data.get(), capture_size);
         std::cout << "Captured Host memory at " << ptr << " size: " << capture_size 
-                  << " checksum: " << checksum << std::endl;
+                  << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
         
         total_size += capture_size;
         chunks.push_back(std::move(chunk));
