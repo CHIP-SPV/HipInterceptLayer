@@ -17,26 +17,6 @@ target_compile_definitions(unit_tests PRIVATE
   CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
 )
 
-# Compile test kernels
-add_executable(test_kernels data/test_kernels.cpp)
-
-# Add compiler flags to preserve symbols
-target_compile_options(test_kernels PRIVATE -g)
-
-# Add linker flags to preserve symbols
-set_target_properties(test_kernels PROPERTIES 
-    LINK_FLAGS "-Wl,--export-dynamic")
-
-target_link_libraries(test_kernels
-  PRIVATE
-  hip::device)
-
-add_executable(data_verification data/data_verification.cpp)
-
-target_link_libraries(data_verification
-  PRIVATE
-  hip::device)
-
 target_link_libraries(unit_tests
   PRIVATE
   GTest::GTest
@@ -44,31 +24,52 @@ target_link_libraries(unit_tests
   HIPIntercept
 )
 
-# Add custom target to run test_kernels with LD_PRELOAD
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/test_kernels-0.trace
-    COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:test_kernels>
-    DEPENDS test_kernels HIPIntercept
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Running test_kernels with HIPIntercept preloaded"
-)
+function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
+    # Create the executable
+    add_executable(${TARGET_NAME} ${SOURCE_FILE})
+    
+    # Add compiler flags to preserve symbols
+    target_compile_options(${TARGET_NAME} PRIVATE -g -O0 -w)
+    
+    # Add linker flags to preserve symbols
+    set_target_properties(${TARGET_NAME} PROPERTIES 
+        LINK_FLAGS "-Wl,--export-dynamic")
+    
+    # Link against HIP
+    target_link_libraries(${TARGET_NAME}
+        PRIVATE
+        hip::device)
 
-add_custom_target(run_test_kernels
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_kernels-0.trace
-)
+    # Set up tracing with all dependencies that affect trace generation
+    add_custom_command(
+        OUTPUT 
+            ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace
+            ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.log
+            ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay
+        COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" 
+            $<TARGET_FILE:${TARGET_NAME}> > ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.log 2>&1
+        COMMAND $<TARGET_FILE:HIPInterceptCompare> ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace > ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay 2>&1
+        DEPENDS 
+            ${TARGET_NAME}
+            HIPIntercept
+            ${SOURCE_FILE}
+            $<TARGET_FILE:HIPIntercept>
+            $<TARGET_FILE:${TARGET_NAME}>
+            $<TARGET_FILE:HIPInterceptCompare>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Running ${TARGET_NAME} with HIPIntercept preloaded and replaying trace"
+    )
 
-# Add custom command to generate data_verification trace
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/data_verification-0.trace
-    COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=$<TARGET_FILE:HIPIntercept>" "HIP_TRACE_LOCATION=${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:data_verification>
-    DEPENDS data_verification HIPIntercept
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Running data_verification with HIPIntercept preloaded"
-)
+    add_custom_target(run_${TARGET_NAME}
+        DEPENDS 
+            ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace
+            ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.log
+            ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay
+    )
+endfunction()
 
-add_custom_target(run_data_verification
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/data_verification-0.trace
-)
+add_hip_trace_target(test_kernels data/test_kernels.cpp)
+add_hip_trace_target(data_verification data/data_verification.cpp)
 
 add_dependencies(unit_tests run_test_kernels run_data_verification)
 gtest_discover_tests(unit_tests)
