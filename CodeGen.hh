@@ -150,6 +150,7 @@ private:
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
     std::string source = kernel.getModuleSource();
 
+    // Insert the kernel source into the code or generate a placeholder kernel declaration
     if (!source.empty()) {
       // Remove all forms of extern "C" declarations
       std::regex extern_c_regex(R"(extern\s*"C"\s*(\{[^}]*\}|[^;{]*;))");
@@ -180,29 +181,9 @@ private:
          << "}\n\n";
     }
 
-    // Add helper function
-    ss << "bool loadTraceData(const char* filename, size_t offset, size_t size, void* dest) {\n"
-       << "    std::ifstream file(filename, std::ios::binary);\n"
-       << "    if (!file.is_open()) {\n"
-       << "        std::cerr << \"Failed to open trace file: \" << filename << std::endl;\n"
-       << "        return false;\n"
-       << "    }\n"
-       << "    \n"
-       << "    // First seek to the offset in the pre_state data\n"
-       << "    file.seekg(offset);\n"
-       << "    if (!file) {\n"
-       << "        std::cerr << \"Failed to seek to offset \" << offset << std::endl;\n"
-       << "        return false;\n"
-       << "    }\n"
-       << "    \n"
-       << "    // Read the data directly into the destination\n"
-       << "    file.read(static_cast<char*>(dest), size);\n"
-       << "    if (!file) {\n"
-       << "        std::cerr << \"Failed to read \" << size << \" bytes at offset \" << offset << std::endl;\n"
-       << "        return false;\n"
-       << "    }\n"
-       << "    return true;\n"
-       << "}\n\n";
+    // Copy the contents of CodeGenKernelHeaders.hh into the code
+    std::ifstream headers_file("CodeGenKernelHeaders.hh");
+    ss << headers_file.rdbuf();
 
     ss << "int main() {\n"
        << "    hipError_t err;\n"
@@ -245,16 +226,6 @@ private:
     }
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
     const auto &args = kernel.getArguments();
-
-    // Add error checking macro
-    ss << "    #define CHECK_HIP(cmd) \\\n"
-       << "        do { \\\n"
-       << "            hipError_t error = (cmd); \\\n"
-       << "            if (error != hipSuccess) { \\\n"
-       << "                std::cerr << \"HIP error: \" << hipGetErrorString(error) << \" at \" << __FILE__ << \":\" << __LINE__ << std::endl; \\\n"
-       << "                return 1; \\\n"
-       << "            } \\\n"
-       << "        } while (0)\n\n";
 
     size_t current_offset = 0;
     size_t pointer_arg_idx = 0;  // Track which pointer argument we're on

@@ -34,6 +34,7 @@ hipMemcpy_fn get_real_hipMemcpy();
 #include <regex>
 #include <fstream>
 #include <iomanip>
+#include "CodeGenKernelHeaders.hh"
 
 // Memory state tracking
 class MemoryState {
@@ -41,14 +42,6 @@ public:
     static constexpr uint32_t MAGIC_START = 0x4D454D53; // 'MEMS'
     static constexpr uint32_t MAGIC_END = 0x454D454D;   // 'EMEM'
 
-    float calculateChecksum(const char* data, size_t size) const {
-        float checksum = 0.0f;
-        for (size_t i = 0; i < size; ++i) {
-            checksum += static_cast<float>(data[i]);
-        }
-        return checksum;
-    }
-    
     struct MemoryChunk {
         std::unique_ptr<char[]> data;
         size_t size;
