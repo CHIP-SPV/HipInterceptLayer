@@ -39,7 +39,6 @@ typedef hipError_t (*hipMemcpyAsync_fn)(void *, const void *, size_t,
 
 // Get the real function pointers
 void *getOriginalFunction(const char *name) {
-  std::cout << "Looking for symbol: " << name << std::endl;
 
   // Try to find the symbol in any loaded library
   void *sym = dlsym(RTLD_NEXT, name);
@@ -64,7 +63,6 @@ void *getOriginalFunction(const char *name) {
     exit(1);
   }
 
-  std::cout << "Found symbol " << name << " at " << sym << std::endl;
   return sym;
 }
 

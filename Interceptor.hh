@@ -88,6 +88,8 @@ extern "C" {
 void capturePreState(KernelExecution& exec, const Kernel& kernel, void** args) {
     const auto& arguments = kernel.getArguments();
     
+    std::cout << "\nPRE-EXECUTION ARGUMENT VALUES:" << std::endl;
+    
     // First pass: store argument info
     for (size_t i = 0; i < arguments.size(); i++) {
         const auto& arg = arguments[i];
