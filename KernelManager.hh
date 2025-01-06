@@ -223,6 +223,52 @@ public:
         file.read(reinterpret_cast<char*>(&is_vector), sizeof(bool));
         // std::cout << "[DEBUG] Deserialized argument: " << name << " (" << type << ")" << std::endl;
     }
+
+    void printValue(std::ostream& os, const void* param_value) const {
+        if (!param_value) {
+            os << "null";
+            return;
+        }
+
+        std::string base = getBaseType();
+        if (base == "int") {
+            os << *(const int*)param_value;
+        } else if (base == "unsigned int") {
+            os << *(const unsigned int*)param_value;
+        } else if (base == "float") {
+            os << *(const float*)param_value;
+        } else if (base == "double") {
+            os << *(const double*)param_value;
+        } else if (base == "bool") {
+            os << (*(const bool*)param_value ? "true" : "false");
+        } else if (base == "size_t") {
+            os << *(const size_t*)param_value;
+        } else if (isVector()) {
+            // Handle vector types (float4, int2, etc.)
+            size_t vec_size = getVectorSize();
+            if (base.find("float") != std::string::npos) {
+                const float* values = (const float*)param_value;
+                os << "(";
+                for (size_t i = 0; i < vec_size; i++) {
+                    if (i > 0) os << ", ";
+                    os << values[i];
+                }
+                os << ")";
+            } else if (base.find("int") != std::string::npos) {
+                const int* values = (const int*)param_value;
+                os << "(";
+                for (size_t i = 0; i < vec_size; i++) {
+                    if (i > 0) os << ", ";
+                    os << values[i];
+                }
+                os << ")";
+            } else {
+                os << "vector of unknown type " << base;
+            }
+        } else {
+            os << "value of unknown type " << base << " at " << param_value;
+        }
+    }
 };
 
 class Kernel {

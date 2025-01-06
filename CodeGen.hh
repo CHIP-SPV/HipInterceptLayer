@@ -147,17 +147,6 @@ private:
        << "#include <sstream>\n"
        << "#include <functional>\n\n";
 
-    // Add hash calculation function
-    ss << "inline std::string calculateHash(const void* data, size_t size) {\n"
-       << "    const unsigned char* bytes = static_cast<const unsigned char*>(data);\n"
-       << "    std::hash<std::string> hasher;\n"
-       << "    std::string data_str(reinterpret_cast<const char*>(bytes), size);\n"
-       << "    size_t hash = hasher(data_str);\n"
-       << "    std::stringstream ss;\n"
-       << "    ss << std::hex << std::setfill('0') << std::setw(6) << (hash & 0xFFFFFF);\n"
-       << "    return ss.str();\n"
-       << "}\n\n";
-
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
     std::string source = kernel.getModuleSource();
 
@@ -269,6 +258,7 @@ private:
 
     size_t current_offset = 0;
     size_t pointer_arg_idx = 0;  // Track which pointer argument we're on
+    size_t scalar_arg_idx = 0;   // Track which scalar argument we're on
 
     // First pass: count pointer arguments to validate arg_sizes
     size_t num_pointer_args = 0;
@@ -285,6 +275,20 @@ private:
         std::cerr << "Error: Mismatch in number of pointer arguments (" << num_pointer_args 
                   << ") and argument sizes (" << op->arg_sizes.size() << ")" << std::endl;
         throw std::runtime_error("Argument size mismatch");
+    }
+
+    // Map to store device pointers and their memory operations
+    std::unordered_map<void*, const MemoryOperation*> device_ptrs;
+
+    // Look for memory operations before this kernel
+    for (size_t i = 0; i < operation_index_; i++) {
+        auto prev_op = tracer.getOperation(i);
+        if (prev_op->isMemory()) {
+            auto mem_op = static_cast<const MemoryOperation*>(prev_op.get());
+            if (mem_op->type == MemoryOpType::COPY && mem_op->kind == hipMemcpyHostToDevice) {
+                device_ptrs[mem_op->dst] = mem_op;
+            }
+        }
     }
 
     for (size_t i = 0; i < args.size(); i++) {
@@ -305,21 +309,31 @@ private:
             
             ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << arg_size << "));\n";
 
-            if (op->pre_state.total_size > 0) {
-                ss << "    // Load pre-execution state from trace\n";
-                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_size 
-                   << ", " << var_name << "_h)) { return 1; }\n";
-                ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
-                   << arg_size << ", hipMemcpyHostToDevice));\n\n";
-                current_offset += arg_size;
-            }
+            // Load data from trace and copy to device
+            ss << "    // Load pre-execution state from trace\n";
+            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_size 
+               << ", " << var_name << "_h)) { return 1; }\n";
+            ss << "    // Copy data from host to device using hipMemcpy with hipMemcpyHostToDevice\n";
+            ss << "    // Note: Using hipMemcpyHostToDevice to copy data from host to device\n";
+            ss << "    // hipMemcpyHostToDevice is used to copy data from host to device\n";
+            ss << "    // Using hipMemcpyHostToDevice to transfer data from host to device memory\n";
+            ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
+               << arg_size << ", hipMemcpyHostToDevice));\n\n";
+            current_offset += arg_size;
             pointer_arg_idx++;
         } else {
-            ss << "    // Load scalar argument from trace\n";
-            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", sizeof("
-               << arg.getBaseType() << "), &" << var_name
-               << ")) { return 1; }\n";
-            current_offset += sizeof(arg.getBaseType());
+            if (scalar_arg_idx < op->scalar_values.size()) {
+                ss << "    // Load scalar argument from trace\n";
+                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", sizeof("
+                   << arg.getBaseType() << "), &" << var_name
+                   << ")) { return 1; }\n";
+                ss << "    std::cout << \"Scalar value for " << var_name << ": \" << " << var_name << " << std::endl;\n";
+                current_offset += sizeof(arg.getBaseType());
+                scalar_arg_idx++;
+            } else {
+                std::cerr << "Error: Missing scalar value for argument " << i << " of kernel " << op->kernel_name << std::endl;
+                throw std::runtime_error("Missing scalar value");
+            }
         }
     }
   }
@@ -358,9 +372,7 @@ private:
             
             ss << "    // Copy back and verify " << var_name << "\n"
                << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_h, (const void*)" << var_name << "_d, "
-               << arg_size << ", hipMemcpyDeviceToHost));\n"
-               << "    std::cout << \"Hash for " << var_name << ": \" << "
-               << "calculateHash(" << var_name << "_h, " << arg_size << ") << std::endl;\n\n";
+               << arg_size << ", hipMemcpyDeviceToHost));\n\n";
         }
     }
   }

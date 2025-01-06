@@ -40,22 +40,13 @@ class MemoryState {
 public:
     static constexpr uint32_t MAGIC_START = 0x4D454D53; // 'MEMS'
     static constexpr uint32_t MAGIC_END = 0x454D454D;   // 'EMEM'
-    
-    // Helper function to calculate hash of a memory region
-    std::string calculateHash(const char* data, size_t size) const {
-        if (!data || size == 0) return "0";
-        
-        // Simple but effective hash calculation
-        uint64_t hash = 14695981039346656037ULL; // FNV-1a hash
+
+    float calculateChecksum(const char* data, size_t size) const {
+        float checksum = 0.0f;
         for (size_t i = 0; i < size; ++i) {
-            hash ^= static_cast<uint8_t>(data[i]);
-            hash *= 1099511628211ULL;
+            checksum += static_cast<float>(data[i]);
         }
-        
-        // Convert to hex string
-        std::stringstream ss;
-        ss << "0x" << std::hex << std::setfill('0') << std::setw(16) << hash;
-        return ss.str();
+        return checksum;
     }
     
     struct MemoryChunk {
@@ -173,23 +164,9 @@ public:
         }
 
         // Calculate and print hash
-        std::string hash = calculateHash(chunk.data.get(), capture_size);
-        std::cout << "Memory region hash at " << ptr << " (size: " << capture_size 
-                  << " bytes): " << hash << std::endl;
-        
-        // Debug: Print first few values for float4
-        if (capture_size % sizeof(float4) == 0) {
-            float4* float4_data = reinterpret_cast<float4*>(chunk.data.get());
-            std::cout << "Captured GPU memory at " << ptr << " size: " << capture_size 
-                      << " (float4 array)" << std::endl;
-            for (size_t i = 0; i < std::min(size_t(2), capture_size/sizeof(float4)); i++) {
-                std::cout << "Value[" << i << "]: ("
-                          << float4_data[i].x << ", "
-                          << float4_data[i].y << ", "
-                          << float4_data[i].z << ", "
-                          << float4_data[i].w << ")" << std::endl;
-            }
-        }
+        float checksum = calculateChecksum(chunk.data.get(), capture_size);
+        std::cout << "Captured GPU memory at " << ptr << " size: " << capture_size 
+                  << " checksum: " << checksum << std::endl;
         
         total_size += capture_size;
         chunks.push_back(std::move(chunk));
@@ -205,23 +182,9 @@ public:
         std::memcpy(chunk.data.get(), ptr, capture_size);
 
         // Calculate and print hash
-        std::string hash = calculateHash(chunk.data.get(), capture_size);
-        std::cout << "Memory region hash at " << ptr << " (size: " << capture_size 
-                  << " bytes): " << hash << std::endl;
-        
-        // Debug: Print first few values for float4
-        if (capture_size % sizeof(float4) == 0) {
-            float4* float4_data = reinterpret_cast<float4*>(chunk.data.get());
-            std::cout << "Captured Host memory at " << ptr << " size: " << capture_size 
-                      << " (float4 array)" << std::endl;
-            for (size_t i = 0; i < std::min(size_t(2), capture_size/sizeof(float4)); i++) {
-                std::cout << "Value[" << i << "]: ("
-                          << float4_data[i].x << ", "
-                          << float4_data[i].y << ", "
-                          << float4_data[i].z << ", "
-                          << float4_data[i].w << ")" << std::endl;
-            }
-        }
+        float checksum = calculateChecksum(chunk.data.get(), capture_size);
+        std::cout << "Captured Host memory at " << ptr << " size: " << capture_size 
+                  << " checksum: " << checksum << std::endl;
         
         total_size += capture_size;
         chunks.push_back(std::move(chunk));
@@ -391,6 +354,7 @@ class KernelExecution : public Operation {
     hipStream_t stream;
     std::vector<void*> arg_ptrs;
     std::vector<size_t> arg_sizes;  // Sizes of pointer arguments
+    std::vector<std::vector<char>> scalar_values;  // Values of scalar arguments
     
     // Add default constructor
     KernelExecution() : Operation(MemoryState(), MemoryState(), OperationType::KERNEL), 
@@ -460,6 +424,15 @@ class KernelExecution : public Operation {
         file.write(reinterpret_cast<const char*>(&num_sizes), sizeof(num_sizes));
         for (size_t size : arg_sizes) {
             file.write(reinterpret_cast<const char*>(&size), sizeof(size_t));
+        }
+
+        // Write scalar values
+        uint32_t num_scalars = static_cast<uint32_t>(scalar_values.size());
+        file.write(reinterpret_cast<const char*>(&num_scalars), sizeof(num_scalars));
+        for (const auto& value : scalar_values) {
+            uint32_t value_size = static_cast<uint32_t>(value.size());
+            file.write(reinterpret_cast<const char*>(&value_size), sizeof(value_size));
+            file.write(value.data(), value_size);
         }
         
         // Write memory states
@@ -537,22 +510,35 @@ class KernelExecution : public Operation {
         for (uint32_t i = 0; i < num_sizes; i++) {
             file.read(reinterpret_cast<char*>(&arg_sizes[i]), sizeof(size_t));
         }
-        
+
+        // Read scalar values
+        uint32_t num_scalars;
+        file.read(reinterpret_cast<char*>(&num_scalars), sizeof(num_scalars));
+        if (num_scalars > 1024) {  // Add reasonable size limit
+            throw std::runtime_error("Invalid number of scalar values");
+        }
+        scalar_values.resize(num_scalars);
+        for (uint32_t i = 0; i < num_scalars; i++) {
+            uint32_t value_size;
+            file.read(reinterpret_cast<char*>(&value_size), sizeof(value_size));
+            if (value_size > 1024) {  // Add reasonable size limit
+                throw std::runtime_error("Invalid scalar value size");
+            }
+            scalar_values[i].resize(value_size);
+            file.read(scalar_values[i].data(), value_size);
+        }
+
         // Read memory states
         bool has_pre_state;
         file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state = MemoryState::deserialize(file);
-        } else {
-            pre_state = MemoryState();
+            pre_state.deserialize(file);
         }
 
         bool has_post_state;
         file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state = MemoryState::deserialize(file);
-        } else {
-            post_state = MemoryState();
+            post_state.deserialize(file);
         }
     }
 
@@ -599,12 +585,23 @@ class MemoryOperation : public Operation {
           kind(kind),
           stream(stream) {
         }
+
+    std::string kindToString(hipMemcpyKind kind) const {
+        switch (kind) {
+            case hipMemcpyHostToHost: return "hipMemcpyHostToHost";
+            case hipMemcpyHostToDevice: return "hipMemcpyHostToDevice";
+            case hipMemcpyDeviceToHost: return "hipMemcpyDeviceToHost";
+            case hipMemcpyDeviceToDevice: return "hipMemcpyDeviceToDevice";
+            case hipMemcpyDefault: return "hipMemcpyDefault";
+            default: return "Unknown";
+        }
+    }
         
     // Replace operator<< with writeToStream
     void writeToStream(std::ostream& os) const override {
         os << "MemoryOperation: " << static_cast<int>(type) << " dst: " << dst
            << " src: " << src << " size: " << size
-           << " value: " << value << " kind: " << kind
+           << " value: " << value << " kind: " << kindToString(kind)
            << " stream: " << stream;
     }
 

@@ -84,4 +84,66 @@ extern "C" {
                              hipMemcpyKind kind, hipStream_t stream);
 }
 
+// Helper functions for state capture
+void capturePreState(KernelExecution& exec, const Kernel& kernel, void** args) {
+    const auto& arguments = kernel.getArguments();
+    
+    // First pass: store argument info
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        void* param_value = args[i];
+        exec.arg_ptrs.push_back(param_value);  // Store all argument pointers
+        
+        if (arg.isPointer()) {
+            void* device_ptr = *(void**)param_value;
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                exec.arg_sizes.push_back(info->size);
+                
+                // Print pre-execution info and capture state
+                std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+                exec.pre_state.captureGpuMemory(device_ptr, info->size);
+            }
+        } else {
+            // For non-pointer types, capture the value
+            std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+            
+            // Get the size based on the argument type
+            size_t value_size = arg.getSize();
+            if (value_size == 0) {
+                std::cerr << "Error: Unknown type size for argument " << i << " type: " << arg.getType() << std::endl;
+                std::abort();
+            }
+            
+            // Store the scalar value
+            std::vector<char> value_data(value_size);
+            std::memcpy(value_data.data(), param_value, value_size);
+            exec.scalar_values.push_back(std::move(value_data));
+            
+            // Print the value using the Argument's printValue method
+            arg.printValue(std::cout, param_value);
+            std::cout << std::endl;
+        }
+    }
+}
+
+void capturePostState(KernelExecution& exec, const Kernel& kernel, void** args) {
+    const auto& arguments = kernel.getArguments();
+    
+    std::cout << "\nPOST-EXECUTION ARGUMENT VALUES:" << std::endl;
+    for (size_t i = 0; i < arguments.size(); i++) {
+        const auto& arg = arguments[i];
+        void* param_value = args[i];
+        
+        if (arg.isPointer()) {
+            void* device_ptr = *(void**)param_value;
+            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
+            if (base_ptr && info) {
+                std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+                exec.post_state.captureGpuMemory(device_ptr, info->size);
+            }
+        }
+    }
+}
+
 #endif // HIP_INTERCEPT_LAYER_INTERCEPTOR_HH

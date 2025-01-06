@@ -104,14 +104,41 @@ private:
 
     bool compareKernelExecutions(const KernelExecution& k1, const KernelExecution& k2) const {
         std::cout << "Comparing kernels: " << k1.kernel_name << " and " << k2.kernel_name << std::endl;
-        return k1.kernel_name == k2.kernel_name &&
-               k1.grid_dim.x == k2.grid_dim.x &&
-               k1.grid_dim.y == k2.grid_dim.y &&
-               k1.grid_dim.z == k2.grid_dim.z &&
-               k1.block_dim.x == k2.block_dim.x &&
-               k1.block_dim.y == k2.block_dim.y &&
-               k1.block_dim.z == k2.block_dim.z &&
-               k1.shared_mem == k2.shared_mem;
+        
+        // Compare basic properties
+        if (k1.kernel_name != k2.kernel_name ||
+            k1.grid_dim.x != k2.grid_dim.x ||
+            k1.grid_dim.y != k2.grid_dim.y ||
+            k1.grid_dim.z != k2.grid_dim.z ||
+            k1.block_dim.x != k2.block_dim.x ||
+            k1.block_dim.y != k2.block_dim.y ||
+            k1.block_dim.z != k2.block_dim.z ||
+            k1.shared_mem != k2.shared_mem) {
+            return false;
+        }
+
+        // Compare scalar values
+        if (k1.scalar_values.size() != k2.scalar_values.size()) {
+            std::cout << "Scalar value count mismatch: " << k1.scalar_values.size() 
+                     << " vs " << k2.scalar_values.size() << std::endl;
+            return false;
+        }
+
+        for (size_t i = 0; i < k1.scalar_values.size(); i++) {
+            const auto& v1 = k1.scalar_values[i];
+            const auto& v2 = k2.scalar_values[i];
+            if (v1.size() != v2.size()) {
+                std::cout << "Scalar value size mismatch at index " << i << ": " 
+                         << v1.size() << " vs " << v2.size() << std::endl;
+                return false;
+            }
+            if (std::memcmp(v1.data(), v2.data(), v1.size()) != 0) {
+                std::cout << "Scalar value mismatch at index " << i << std::endl;
+                return false;
+            }
+        }
+
+        return true;
     }
 
     bool compareMemoryOperations(const MemoryOperation& m1, const MemoryOperation& m2) const {
@@ -173,6 +200,44 @@ private:
         os << "  Config: gridDim=(" << k1.grid_dim.x << "," << k1.grid_dim.y << "," << k1.grid_dim.z 
            << "), blockDim=(" << k1.block_dim.x << "," << k1.block_dim.y << "," << k1.block_dim.z 
            << "), shared=" << k1.shared_mem << "\n";
+
+        // Print scalar value differences
+        for (size_t i = 0; i < std::max(k1.scalar_values.size(), k2.scalar_values.size()); i++) {
+            if (i >= k1.scalar_values.size()) {
+                os << "  Scalar arg " << i << ": missing in first execution\n";
+                continue;
+            }
+            if (i >= k2.scalar_values.size()) {
+                os << "  Scalar arg " << i << ": missing in second execution\n";
+                continue;
+            }
+
+            const auto& v1 = k1.scalar_values[i];
+            const auto& v2 = k2.scalar_values[i];
+            if (v1.size() != v2.size()) {
+                os << "  Scalar arg " << i << ": size mismatch (" << v1.size() << " vs " << v2.size() << ")\n";
+                continue;
+            }
+
+            if (std::memcmp(v1.data(), v2.data(), v1.size()) != 0) {
+                // Try to interpret and print the values based on common sizes
+                if (v1.size() == sizeof(int)) {
+                    os << "  Scalar arg " << i << " (int): " 
+                       << *reinterpret_cast<const int*>(v1.data()) << " vs "
+                       << *reinterpret_cast<const int*>(v2.data()) << "\n";
+                } else if (v1.size() == sizeof(float)) {
+                    os << "  Scalar arg " << i << " (float): " 
+                       << *reinterpret_cast<const float*>(v1.data()) << " vs "
+                       << *reinterpret_cast<const float*>(v2.data()) << "\n";
+                } else if (v1.size() == sizeof(double)) {
+                    os << "  Scalar arg " << i << " (double): " 
+                       << *reinterpret_cast<const double*>(v1.data()) << " vs "
+                       << *reinterpret_cast<const double*>(v2.data()) << "\n";
+                } else {
+                    os << "  Scalar arg " << i << ": binary difference (size=" << v1.size() << ")\n";
+                }
+            }
+        }
 
         printMemoryStateDifference(os, k1.pre_state, k2.pre_state);
         printMemoryStateDifference(os, k1.post_state, k2.post_state);

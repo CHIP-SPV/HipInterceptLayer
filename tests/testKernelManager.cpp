@@ -426,12 +426,22 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
     // Setup kernel arguments
     std::vector<void*> arg_ptrs = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000)};
     std::vector<size_t> arg_sizes = {sizeof(int*), sizeof(float*)};
+    
+    // Setup scalar values
+    int scalar1 = 42;
+    float scalar2 = 3.14f;
+    std::vector<std::vector<char>> scalar_values;
+    scalar_values.emplace_back(sizeof(int));
+    scalar_values.emplace_back(sizeof(float));
+    std::memcpy(scalar_values[0].data(), &scalar1, sizeof(int));
+    std::memcpy(scalar_values[1].data(), &scalar2, sizeof(float));
 
     // Create kernel execution with these states
     KernelExecution exec(pre_state, post_state, function_ptr, kernel_name,
                         grid, block, shared_mem, stream);
     exec.arg_ptrs = arg_ptrs;
     exec.arg_sizes = arg_sizes;
+    exec.scalar_values = std::move(scalar_values);
 
     std::cout << "Before serialization, kernel name: " << exec.kernel_name << " length: " << exec.kernel_name.length() << std::endl;
 
@@ -477,6 +487,17 @@ TEST(KernelExecutionTest, MemoryStateHandling) {
     ASSERT_EQ(exec2->stream, stream);
     ASSERT_EQ(exec2->arg_ptrs.size(), 2);
     ASSERT_EQ(exec2->arg_sizes.size(), 2);
+    ASSERT_EQ(exec2->scalar_values.size(), 2);
+
+    // Verify scalar values are preserved
+    ASSERT_EQ(exec2->scalar_values[0].size(), sizeof(int));
+    ASSERT_EQ(exec2->scalar_values[1].size(), sizeof(float));
+    int deserialized_scalar1;
+    float deserialized_scalar2;
+    std::memcpy(&deserialized_scalar1, exec2->scalar_values[0].data(), sizeof(int));
+    std::memcpy(&deserialized_scalar2, exec2->scalar_values[1].data(), sizeof(float));
+    ASSERT_EQ(deserialized_scalar1, scalar1);
+    ASSERT_FLOAT_EQ(deserialized_scalar2, scalar2);
 
     // Verify data is preserved after deserialization
     {

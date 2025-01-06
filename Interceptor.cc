@@ -260,62 +260,16 @@ static hipError_t hipLaunchKernel_impl(const void *function_address,
     std::cout << "\nDEBUG: Processing kernel arguments:"
               << "\n  Total args: " << kernel.getArguments().size() << std::endl;
 
-    const auto& arguments = kernel.getArguments();
-    
-    // First pass: store argument info
-    for (size_t i = 0; i < arguments.size(); i++) {
-        const auto& arg = arguments[i];
-        void* param_value = args[i];
-        exec.arg_ptrs.push_back(param_value);  // Store all argument pointers
-        
-        if (arg.isPointer()) {
-            void* device_ptr = *(void**)param_value;
-            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
-            if (base_ptr && info) {
-                exec.arg_sizes.push_back(info->size);
-                
-                // Print pre-execution info and capture state
-                std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.pre_state.captureGpuMemory(device_ptr, info->size);
-            }
-        } else {
-            // For non-pointer types, just print the value
-            std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-            if (arg.getType() == "int" || arg.getType() == "unsigned int") {
-                std::cout << *(int*)param_value;
-            } else if (arg.getType() == "float") {
-                std::cout << *(float*)param_value;
-            } else if (arg.getType() == "double") {
-                std::cout << *(double*)param_value;
-            } else {
-                std::cout << "Raw value at " << param_value;
-            }
-            std::cout << std::endl;
-        }
-    }
+    // Capture pre-execution state
+    capturePreState(exec, kernel, args);
 
     // Launch kernel
     hipError_t result = get_real_hipLaunchKernel()(function_address, numBlocks, 
                                                   dimBlocks, args, sharedMemBytes, stream);
     (void)get_real_hipDeviceSynchronize()();
     
-    // Capture post-execution states
-    std::cout << "\nPOST-EXECUTION ARGUMENT VALUES:" << std::endl;
-    for (size_t i = 0; i < arguments.size(); i++) {
-        const auto& arg = arguments[i];
-        void* param_value = args[i];
-        
-        if (arg.isPointer()) {
-            void* device_ptr = *(void**)param_value;
-            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
-            if (base_ptr && info) {
-                std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.post_state.captureGpuMemory(device_ptr, info->size);
-            }
-        }
-    }
+    // Capture post-execution state
+    capturePostState(exec, kernel, args);
     
     // Record kernel execution using Tracer
     Tracer::instance().recordKernelLaunch(exec);
@@ -602,40 +556,8 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
     std::cout << "\nDEBUG: Processing kernel arguments:"
               << "\n  Total args: " << kernel.getArguments().size() << std::endl;
 
-    const auto& arguments = kernel.getArguments();
-    
-    // First pass: store argument info
-    for (size_t i = 0; i < arguments.size(); i++) {
-        const auto& arg = arguments[i];
-        void* param_value = kernelParams[i];
-        exec.arg_ptrs.push_back(param_value);  // Store all argument pointers
-        
-        if (arg.isPointer()) {
-            void* device_ptr = *(void**)param_value;
-            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
-            if (base_ptr && info) {
-                exec.arg_sizes.push_back(info->size);
-                
-                // Print pre-execution info and capture state
-                std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.pre_state.captureGpuMemory(device_ptr, info->size);
-            }
-        } else {
-            // For non-pointer types, just print the value
-            std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-            if (arg.getType() == "int" || arg.getType() == "unsigned int") {
-                std::cout << *(int*)param_value;
-            } else if (arg.getType() == "float") {
-                std::cout << *(float*)param_value;
-            } else if (arg.getType() == "double") {
-                std::cout << *(double*)param_value;
-            } else {
-                std::cout << "Raw value at " << param_value;
-            }
-            std::cout << std::endl;
-        }
-    }
+    // Capture pre-execution state
+    capturePreState(exec, kernel, kernelParams);
 
     // Launch kernel
     hipError_t result = get_real_hipModuleLaunchKernel()(f, gridDimX, gridDimY, gridDimZ,
@@ -644,22 +566,8 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                                         kernelParams, extra);
     (void)get_real_hipDeviceSynchronize()();
     
-    // Capture post-execution states
-    std::cout << "\nPOST-EXECUTION ARGUMENT VALUES:" << std::endl;
-    for (size_t i = 0; i < arguments.size(); i++) {
-        const auto& arg = arguments[i];
-        void* param_value = kernelParams[i];
-        
-        if (arg.isPointer()) {
-            void* device_ptr = *(void**)param_value;
-            auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
-            if (base_ptr && info) {
-                std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                std::cout << "Pointer to GPU memory " << device_ptr << " (size: " << info->size << " bytes)\n";
-                exec.post_state.captureGpuMemory(device_ptr, info->size);
-            }
-        }
-    }
+    // Capture post-execution state
+    capturePostState(exec, kernel, kernelParams);
 
     Tracer::instance().recordKernelLaunch(exec);
     return result;
