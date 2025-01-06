@@ -72,6 +72,7 @@ endfunction()
 
 add_hip_trace_target(test_kernels data/test_kernels.cpp)
 add_hip_trace_target(data_verification data/data_verification.cpp)
+add_hip_trace_target(vectorAdd data/vectorAdd.cpp)
 add_hip_trace_target(computeNonbondedRepro data/computeNonbondedRepro.cpp)
 
 gtest_discover_tests(unit_tests)

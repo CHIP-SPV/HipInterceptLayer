@@ -525,14 +525,14 @@ class KernelExecution : public Operation {
         bool has_pre_state;
         file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state.deserialize(file);
-        }
+            pre_state = MemoryState::deserialize(file);  // Fixed: assign the returned value
+        } 
 
         bool has_post_state;
         file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state.deserialize(file);
-        }
+            post_state = MemoryState::deserialize(file);  // Fixed: assign the returned value
+        } 
     }
 
 

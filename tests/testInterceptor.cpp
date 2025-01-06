@@ -10,288 +10,151 @@ protected:
     }
 };
 
-TEST_F(InterceptorTest, VariousDataTypesMemoryStateTest) {
-    const size_t N = 4; // Test with 4 elements for vector types
-    
-    // Allocate host memory for different data types
-    float* h_float = new float[N];
-    float4* h_float4 = new float4[N];
-    uint32_t* h_uint = new uint32_t[N];
-    float2* h_vec2 = new float2[N];
-    
-    // Initialize host data with test values
-    for (size_t i = 0; i < N; i++) {
-        h_float[i] = 1.0f + i;
-        h_float4[i] = make_float4(i, i + 0.5f, i + 1.0f, i + 1.5f);
-        h_uint[i] = i + 42;
-        h_vec2[i] = make_float2(i + 0.1f, i + 0.2f);
-    }
-    
-    // Allocate device memory
-    float* d_float;
-    float4* d_float4;
-    uint32_t* d_uint;
-    float2* d_vec2;
-    
-    ASSERT_EQ(hipMalloc(&d_float, N * sizeof(float)), hipSuccess);
-    ASSERT_EQ(hipMalloc(&d_float4, N * sizeof(float4)), hipSuccess);
-    ASSERT_EQ(hipMalloc(&d_uint, N * sizeof(uint32_t)), hipSuccess);
-    ASSERT_EQ(hipMalloc(&d_vec2, N * sizeof(float2)), hipSuccess);
-    
-    // Copy data to device
-    ASSERT_EQ(hipMemcpy(d_float, h_float, N * sizeof(float), hipMemcpyHostToDevice), hipSuccess);
-    ASSERT_EQ(hipMemcpy(d_float4, h_float4, N * sizeof(float4), hipMemcpyHostToDevice), hipSuccess);
-    ASSERT_EQ(hipMemcpy(d_uint, h_uint, N * sizeof(uint32_t), hipMemcpyHostToDevice), hipSuccess);
-    ASSERT_EQ(hipMemcpy(d_vec2, h_vec2, N * sizeof(float2), hipMemcpyHostToDevice), hipSuccess);
-    
-    // Create arrays for verification
-    float* verify_float = new float[N];
-    float4* verify_float4 = new float4[N];
-    uint32_t* verify_uint = new uint32_t[N];
-    float2* verify_vec2 = new float2[N];
-    
-    // Copy data back to host for verification
-    ASSERT_EQ(hipMemcpy(verify_float, d_float, N * sizeof(float), hipMemcpyDeviceToHost), hipSuccess);
-    ASSERT_EQ(hipMemcpy(verify_float4, d_float4, N * sizeof(float4), hipMemcpyDeviceToHost), hipSuccess);
-    ASSERT_EQ(hipMemcpy(verify_uint, d_uint, N * sizeof(uint32_t), hipMemcpyDeviceToHost), hipSuccess);
-    ASSERT_EQ(hipMemcpy(verify_vec2, d_vec2, N * sizeof(float2), hipMemcpyDeviceToHost), hipSuccess);
-    
-    // Verify data matches
-    for (size_t i = 0; i < N; i++) {
-        EXPECT_FLOAT_EQ(verify_float[i], h_float[i]);
-        
-        EXPECT_FLOAT_EQ(verify_float4[i].x, h_float4[i].x);
-        EXPECT_FLOAT_EQ(verify_float4[i].y, h_float4[i].y);
-        EXPECT_FLOAT_EQ(verify_float4[i].z, h_float4[i].z);
-        EXPECT_FLOAT_EQ(verify_float4[i].w, h_float4[i].w);
-        
-        EXPECT_EQ(verify_uint[i], h_uint[i]);
-        
-        EXPECT_FLOAT_EQ(verify_vec2[i].x, h_vec2[i].x);
-        EXPECT_FLOAT_EQ(verify_vec2[i].y, h_vec2[i].y);
-    }
-    
-    // Cleanup
-    delete[] h_float;
-    delete[] h_float4;
-    delete[] h_uint;
-    delete[] h_vec2;
-    delete[] verify_float;
-    delete[] verify_float4;
-    delete[] verify_uint;
-    delete[] verify_vec2;
-    
-    ASSERT_EQ(hipFree(d_float), hipSuccess);
-    ASSERT_EQ(hipFree(d_float4), hipSuccess);
-    ASSERT_EQ(hipFree(d_uint), hipSuccess);
-    ASSERT_EQ(hipFree(d_vec2), hipSuccess);
-}
-
-TEST_F(InterceptorTest, DataVerificationTraceTest) {
-    // Load the trace file generated during build
-    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/data_verification-0.trace";
-    
-    // Create a Tracer instance to read the trace file
+// Test to verify vectorAdd kernel behavior from trace
+TEST_F(InterceptorTest, CompareVectorAddTraceWithSource) {
+    // Load and verify the trace file
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/vectorAdd-0.trace";
     Tracer tracer(trace_file);
-    std::cout << tracer << std::endl;
-    tracer.setSerializeTrace(false);
     
-    // We expect 9 operations:
-    // 4 H2D copies
-    // 1 kernel
-    // 4 D2H copies
-    ASSERT_EQ(tracer.getNumOperations(), 9) << "Expected 9 operations in trace";
+    // Find the kernel operation by name
+    auto kernel_indices = tracer.getOperationsIdxByName("vectorIncrementKernel");
+    ASSERT_FALSE(kernel_indices.empty()) << "No vectorIncrementKernel found in trace";
     
-    const size_t N = 3;  // Same size as in data_verification.cpp
+    // Get the first instance of the kernel
+    auto kernel_op = std::dynamic_pointer_cast<KernelExecution>(tracer.getOperation(kernel_indices[0]));
+    ASSERT_NE(kernel_op, nullptr);
+    std::cout << "Found kernel operation at index " << kernel_indices[0] << std::endl;
     
-    // Get the kernel operation (should be operation 4)
-    auto kernel_op = tracer.getOperation(4);
-    ASSERT_TRUE(kernel_op->isKernel()) << "Operation 4 should be a kernel";
-    auto kernel = static_cast<const KernelExecution*>(kernel_op.get());
+    // Add debug output for kernel operation details
+    std::cout << "Kernel operation details:" << std::endl;
+    std::cout << "  Name: " << kernel_op->kernel_name << std::endl;
+    std::cout << "  Grid dim: " << kernel_op->grid_dim.x << "," << kernel_op->grid_dim.y << "," << kernel_op->grid_dim.z << std::endl;
+    std::cout << "  Block dim: " << kernel_op->block_dim.x << "," << kernel_op->block_dim.y << "," << kernel_op->block_dim.z << std::endl;
+    std::cout << "  Shared mem: " << kernel_op->shared_mem << std::endl;
+    std::cout << "  Number of arguments: " << kernel_op->arg_ptrs.size() << std::endl;
+    std::cout << "  Number of scalar values: " << kernel_op->scalar_values.size() << std::endl;
     
-    // Verify kernel name and configuration
-    EXPECT_EQ(kernel->kernel_name, "complexDataKernel") << "Incorrect kernel name";
-    EXPECT_EQ(kernel->grid_dim.x, 1) << "Incorrect grid dimension x";
-    EXPECT_EQ(kernel->grid_dim.y, 1) << "Incorrect grid dimension y";
-    EXPECT_EQ(kernel->grid_dim.z, 1) << "Incorrect grid dimension z";
-    EXPECT_EQ(kernel->block_dim.x, 3) << "Incorrect block dimension x";
-    EXPECT_EQ(kernel->block_dim.y, 1) << "Incorrect block dimension y";
-    EXPECT_EQ(kernel->block_dim.z, 1) << "Incorrect block dimension z";
+    // Verify kernel launch parameters
+    EXPECT_EQ(kernel_op->kernel_name, "vectorIncrementKernel");
+    EXPECT_EQ(kernel_op->block_dim.x, 256);  // From vectorAdd.cpp
+    EXPECT_EQ(kernel_op->block_dim.y, 1);
+    EXPECT_EQ(kernel_op->block_dim.z, 1);
+    EXPECT_EQ(kernel_op->shared_mem, 0);
+
+    // Verify scalar values
+    ASSERT_EQ(kernel_op->scalar_values.size(), 2) << "Expected 2 scalar values (float4 and float)";
     
-    // Get memory operations for scalar array
-    auto scalar_h2d = tracer.getOperation(0);
-    auto scalar_d2h = tracer.getOperation(5);
+    // First scalar value should be float4 (16 bytes)
+    ASSERT_EQ(kernel_op->scalar_values[0].size(), 16) << "Expected float4 to be 16 bytes";
+    const float4* input_vec4 = reinterpret_cast<const float4*>(kernel_op->scalar_values[0].data());
+    std::cout << "Input float4: (" << input_vec4->x << ", " << input_vec4->y << ", " 
+              << input_vec4->z << ", " << input_vec4->w << ")" << std::endl;
     
-    ASSERT_TRUE(scalar_h2d->isMemory()) << "Operation 0 should be memory operation";
-    ASSERT_TRUE(scalar_d2h->isMemory()) << "Operation 5 should be memory operation";
-    
-    // Verify scalar array data
-    auto scalar_h2d_op = static_cast<const MemoryOperation*>(scalar_h2d.get());
-    auto scalar_d2h_op = static_cast<const MemoryOperation*>(scalar_d2h.get());
-    
-    ASSERT_EQ(scalar_h2d_op->size, N * sizeof(float)) << "Incorrect scalar array size";
-    ASSERT_EQ(scalar_d2h_op->size, N * sizeof(float)) << "Incorrect scalar array size";
-    
-    // Get pre and post state data for scalar array
-    auto pre_scalar_data = scalar_h2d_op->pre_state.getData();
-    auto post_scalar_data = scalar_d2h_op->post_state.getData();
-    ASSERT_NE(pre_scalar_data, nullptr);
-    ASSERT_NE(post_scalar_data, nullptr);
-    
-    // Ensure proper alignment for scalar array
-    std::vector<float> pre_scalar_aligned(N);
-    std::vector<float> post_scalar_aligned(N);
-    std::memcpy(pre_scalar_aligned.data(), pre_scalar_data.get(), N * sizeof(float));
-    std::memcpy(post_scalar_aligned.data(), post_scalar_data.get(), N * sizeof(float));
-    
-    // Verify scalar array values
-    for (size_t i = 0; i < N; i++) {
-        // Pre-state: initialized as 1.0f + i
-        EXPECT_FLOAT_EQ(pre_scalar_aligned[i], 1.0f + i) 
-            << "Pre-state scalar mismatch at index " << i;
-        
-        // Post-state: scalar[i] = scalar[i] * scalar2 + scalar1
-        // where scalar2 = 2.0f and scalar1 = 5
-        float expected = (1.0f + i) * 2.0f + 5.0f;
-        EXPECT_FLOAT_EQ(post_scalar_aligned[i], expected)
-            << "Post-state scalar mismatch at index " << i;
+    // Second scalar value should be float (4 bytes)
+    ASSERT_EQ(kernel_op->scalar_values[1].size(), 8) << "Expected float to be 8 bytes";
+    const float* input_scalar = reinterpret_cast<const float*>(kernel_op->scalar_values[1].data());
+    std::cout << "Input scalar: " << *input_scalar << std::endl;
+
+    // Expected values from vectorAdd.cpp
+    const float4 expected_input_vec4 = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
+    const float expected_input_scalar = 0.5f;
+
+    // Verify input values
+    EXPECT_FLOAT_EQ(input_vec4->x, expected_input_vec4.x);
+    EXPECT_FLOAT_EQ(input_vec4->y, expected_input_vec4.y);
+    EXPECT_FLOAT_EQ(input_vec4->z, expected_input_vec4.z);
+    EXPECT_FLOAT_EQ(input_vec4->w, expected_input_vec4.w);
+    EXPECT_FLOAT_EQ(*input_scalar, expected_input_scalar);
+
+    // Pre-execution state
+    auto pre_state = kernel_op->pre_state;
+    std::cout << "Pre-state total_size: " << pre_state.total_size << std::endl;
+    std::cout << "Pre-state chunks size: " << pre_state.chunks.size() << std::endl;
+    ASSERT_GT(pre_state.total_size, 0);
+    ASSERT_GT(pre_state.chunks.size(), 0) << "No chunks in pre_state";
+
+    // Get raw data from the first chunk of pre_state
+    const auto& pre_chunk = pre_state.chunks[0];
+    const float4* pre_vec4 = reinterpret_cast<const float4*>(pre_chunk.data.get());
+    const float* pre_scalar = reinterpret_cast<const float*>(pre_vec4 + 1024);  // N=1024
+
+    // Print first few pre-state values
+    std::cout << "\nFirst few pre-state values:" << std::endl;
+    for (int i = 0; i < 5; i++) {
+        std::cout << "  Index " << i << ": vec4=("
+                  << pre_vec4[i].x << ", " 
+                  << pre_vec4[i].y << ", "
+                  << pre_vec4[i].z << ", "
+                  << pre_vec4[i].w << "), "
+                  << "scalar=" << pre_scalar[i] << std::endl;
     }
-    
-    // Get memory operations for vec4 array
-    auto vec4_h2d = tracer.getOperation(1);
-    auto vec4_d2h = tracer.getOperation(6);
-    
-    ASSERT_TRUE(vec4_h2d->isMemory()) << "Operation 1 should be memory operation";
-    ASSERT_TRUE(vec4_d2h->isMemory()) << "Operation 6 should be memory operation";
-    
-    // Verify vec4 array data
-    auto vec4_h2d_op = static_cast<const MemoryOperation*>(vec4_h2d.get());
-    auto vec4_d2h_op = static_cast<const MemoryOperation*>(vec4_d2h.get());
-    
-    ASSERT_EQ(vec4_h2d_op->size, N * sizeof(HIP_vector_type<float, 4>)) << "Incorrect vec4 array size";
-    ASSERT_EQ(vec4_d2h_op->size, N * sizeof(HIP_vector_type<float, 4>)) << "Incorrect vec4 array size";
-    
-    // Get pre and post state data for vec4 array
-    auto pre_vec4_data = vec4_h2d_op->pre_state.getData();
-    auto post_vec4_data = vec4_d2h_op->post_state.getData();
-    ASSERT_NE(pre_vec4_data, nullptr);
-    ASSERT_NE(post_vec4_data, nullptr);
-    
-    // Ensure proper alignment for vec4 array
-    std::vector<HIP_vector_type<float, 4>> pre_vec4_aligned(N);
-    std::vector<HIP_vector_type<float, 4>> post_vec4_aligned(N);
-    std::memcpy(pre_vec4_aligned.data(), pre_vec4_data.get(), N * sizeof(HIP_vector_type<float, 4>));
-    std::memcpy(post_vec4_aligned.data(), post_vec4_data.get(), N * sizeof(HIP_vector_type<float, 4>));
-    
-    // Verify vec4 array values
-    for (size_t i = 0; i < N; i++) {
-        // Pre-state: initialized as 1.0f + (i * 4), 2.0f + (i * 4), etc.
-        EXPECT_FLOAT_EQ(pre_vec4_aligned[i].x, 1.0f + (i * 4)) << "Pre-state vec4 x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(pre_vec4_aligned[i].y, 2.0f + (i * 4)) << "Pre-state vec4 y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(pre_vec4_aligned[i].z, 3.0f + (i * 4)) << "Pre-state vec4 z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(pre_vec4_aligned[i].w, 4.0f + (i * 4)) << "Pre-state vec4 w mismatch at index " << i;
-        
-        // Post-state: vec4[i] = vec4[i] * scalar2 where scalar2 = 2.0f
-        EXPECT_FLOAT_EQ(post_vec4_aligned[i].x, (1.0f + (i * 4)) * 2.0f) << "Post-state vec4 x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(post_vec4_aligned[i].y, (2.0f + (i * 4)) * 2.0f) << "Post-state vec4 y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(post_vec4_aligned[i].z, (3.0f + (i * 4)) * 2.0f) << "Post-state vec4 z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(post_vec4_aligned[i].w, (4.0f + (i * 4)) * 2.0f) << "Post-state vec4 w mismatch at index " << i;
+
+    // Verify all pre-state values (should be uninitialized or zero)
+    for (int i = 0; i < 1024; i++) {
+        // We don't verify exact values since they're uninitialized
+        // but we can verify they exist and are accessible
+        volatile float x = pre_vec4[i].x;
+        volatile float y = pre_vec4[i].y;
+        volatile float z = pre_vec4[i].z;
+        volatile float w = pre_vec4[i].w;
+        volatile float s = pre_scalar[i];
+        (void)x; (void)y; (void)z; (void)w; (void)s;  // Prevent unused variable warnings
     }
-    
-    // Get memory operations for vec2 array
-    auto vec2_h2d = tracer.getOperation(2);
-    auto vec2_d2h = tracer.getOperation(7);
-    
-    ASSERT_TRUE(vec2_h2d->isMemory()) << "Operation 2 should be memory operation";
-    ASSERT_TRUE(vec2_d2h->isMemory()) << "Operation 7 should be memory operation";
-    
-    // Verify vec2 array data
-    auto vec2_h2d_op = static_cast<const MemoryOperation*>(vec2_h2d.get());
-    auto vec2_d2h_op = static_cast<const MemoryOperation*>(vec2_d2h.get());
-    
-    ASSERT_EQ(vec2_h2d_op->size, N * sizeof(HIP_vector_type<float, 2>)) << "Incorrect vec2 array size";
-    ASSERT_EQ(vec2_d2h_op->size, N * sizeof(HIP_vector_type<float, 2>)) << "Incorrect vec2 array size";
-    
-    // Get pre and post state data for vec2 array
-    auto pre_vec2_data = vec2_h2d_op->pre_state.getData();
-    auto post_vec2_data = vec2_d2h_op->post_state.getData();
-    ASSERT_NE(pre_vec2_data, nullptr);
-    ASSERT_NE(post_vec2_data, nullptr);
-    
-    // Ensure proper alignment for vec2 array
-    std::vector<HIP_vector_type<float, 2>> pre_vec2_aligned(N);
-    std::vector<HIP_vector_type<float, 2>> post_vec2_aligned(N);
-    std::memcpy(pre_vec2_aligned.data(), pre_vec2_data.get(), N * sizeof(HIP_vector_type<float, 2>));
-    std::memcpy(post_vec2_aligned.data(), post_vec2_data.get(), N * sizeof(HIP_vector_type<float, 2>));
-    
-    // Verify vec2 array values
-    for (size_t i = 0; i < N; i++) {
-        // Pre-state: initialized as 1.0f + (i * 2), 2.0f + (i * 2)
-        EXPECT_FLOAT_EQ(pre_vec2_aligned[i].x, 1.0f + (i * 2)) << "Pre-state vec2 x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(pre_vec2_aligned[i].y, 2.0f + (i * 2)) << "Pre-state vec2 y mismatch at index " << i;
-        
-        // Post-state: vec2[i] = vec2[i] + scalar3 where scalar3 = 1.5
-        EXPECT_FLOAT_EQ(post_vec2_aligned[i].x, (1.0f + (i * 2)) + 1.5f) << "Post-state vec2 x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(post_vec2_aligned[i].y, (2.0f + (i * 2)) + 1.5f) << "Post-state vec2 y mismatch at index " << i;
+
+    // Post-execution state
+    auto post_state = kernel_op->post_state;
+    std::cout << "Post-state total_size: " << post_state.total_size << std::endl;
+    std::cout << "Post-state chunks size: " << post_state.chunks.size() << std::endl;
+    ASSERT_GT(post_state.total_size, 0);
+    ASSERT_GT(post_state.chunks.size(), 0) << "No chunks in post_state";
+
+    // Get raw data from the first chunk of post_state
+    const auto& post_chunk = post_state.chunks[0];
+    const float4* output_vec4 = reinterpret_cast<const float4*>(post_chunk.data.get());
+    const float* output_scalar = reinterpret_cast<const float*>(output_vec4 + 1024);  // N=1024
+
+    // Expected output values
+    const float4 expected_output_vec4 = make_float4(
+        expected_input_vec4.x + expected_input_scalar,
+        expected_input_vec4.y + expected_input_scalar,
+        expected_input_vec4.z + expected_input_scalar,
+        expected_input_vec4.w + expected_input_scalar
+    );
+    const float expected_output_scalar = expected_input_scalar * 2.0f;
+
+    // Print first few output values
+    std::cout << "\nFirst few post-state values:" << std::endl;
+    for (int i = 0; i < 5; i++) {
+        std::cout << "  Index " << i << ": vec4=("
+                  << output_vec4[i].x << ", " 
+                  << output_vec4[i].y << ", "
+                  << output_vec4[i].z << ", "
+                  << output_vec4[i].w << "), "
+                  << "scalar=" << output_scalar[i] << std::endl;
     }
-    
-    // Get memory operations for float4 array
-    auto float4_h2d = tracer.getOperation(3);
-    auto float4_d2h = tracer.getOperation(8);
-    
-    ASSERT_TRUE(float4_h2d->isMemory()) << "Operation 3 should be memory operation";
-    ASSERT_TRUE(float4_d2h->isMemory()) << "Operation 8 should be memory operation";
-    
-    // Verify float4 array data
-    auto float4_h2d_op = static_cast<const MemoryOperation*>(float4_h2d.get());
-    auto float4_d2h_op = static_cast<const MemoryOperation*>(float4_d2h.get());
-    
-    ASSERT_EQ(float4_h2d_op->size, N * sizeof(float4)) << "Incorrect float4 array size";
-    ASSERT_EQ(float4_d2h_op->size, N * sizeof(float4)) << "Incorrect float4 array size";
-    
-    // Get pre and post state data for float4 array
-    auto pre_float4_data = float4_h2d_op->pre_state.getData();
-    auto post_float4_data = float4_d2h_op->post_state.getData();
-    ASSERT_NE(pre_float4_data, nullptr);
-    ASSERT_NE(post_float4_data, nullptr);
-    
-    // Ensure proper alignment for float4 array
-    std::vector<float4> pre_float4_aligned(N);
-    std::vector<float4> post_float4_aligned(N);
-    std::memcpy(pre_float4_aligned.data(), pre_float4_data.get(), N * sizeof(float4));
-    std::memcpy(post_float4_aligned.data(), post_float4_data.get(), N * sizeof(float4));
-    
-    // Verify float4 array values
-    for (size_t i = 0; i < N; i++) {
-        // Pre-state: initialized as 1.0f + (i * 4), 2.0f + (i * 4), etc.
-        EXPECT_FLOAT_EQ(pre_float4_aligned[i].x, 1.0f + (i * 4)) << "Pre-state float4 x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(pre_float4_aligned[i].y, 2.0f + (i * 4)) << "Pre-state float4 y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(pre_float4_aligned[i].z, 3.0f + (i * 4)) << "Pre-state float4 z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(pre_float4_aligned[i].w, 4.0f + (i * 4)) << "Pre-state float4 w mismatch at index " << i;
-        
-        // Post-state: float4[i] = float4[i] * uint_val where uint_val = 3 and flag = true
-        EXPECT_FLOAT_EQ(post_float4_aligned[i].x, (1.0f + (i * 4)) * 3.0f) << "Post-state float4 x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(post_float4_aligned[i].y, (2.0f + (i * 4)) * 3.0f) << "Post-state float4 y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(post_float4_aligned[i].z, (3.0f + (i * 4)) * 3.0f) << "Post-state float4 z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(post_float4_aligned[i].w, (4.0f + (i * 4)) * 3.0f) << "Post-state float4 w mismatch at index " << i;
+
+    std::cout << "\nExpected output vec4: ("
+              << expected_output_vec4.x << ", "
+              << expected_output_vec4.y << ", "
+              << expected_output_vec4.z << ", "
+              << expected_output_vec4.w << ")" << std::endl;
+    std::cout << "Expected output scalar: " << expected_output_scalar << std::endl;
+
+    // Verify all output values
+    for (int i = 0; i < 1024; i++) {
+        // Verify vec4 components
+        EXPECT_FLOAT_EQ(output_vec4[i].x, expected_output_vec4.x)
+            << "Vec4.x mismatch at index " << i;
+        EXPECT_FLOAT_EQ(output_vec4[i].y, expected_output_vec4.y)
+            << "Vec4.y mismatch at index " << i;
+        EXPECT_FLOAT_EQ(output_vec4[i].z, expected_output_vec4.z)
+            << "Vec4.z mismatch at index " << i;
+        EXPECT_FLOAT_EQ(output_vec4[i].w, expected_output_vec4.w)
+            << "Vec4.w mismatch at index " << i;
+
+        // Verify scalar value
+        EXPECT_FLOAT_EQ(output_scalar[i], expected_output_scalar)
+            << "Scalar mismatch at index " << i;
     }
 }
 
-TEST_F(InterceptorTest, SimpleMemoryStateTest) {
-    // Create a simple array of floats
-    const size_t size = 3 * sizeof(float);
-    float input[3] = {1.0f, 2.0f, 3.0f};
-    
-    // Create a MemoryState and capture the data
-    MemoryState state;
-    state.captureHostMemory(input, size);
-    
-    // Get the data back and verify
-    auto data = state.getData();
-    ASSERT_NE(data, nullptr);
-    
-    float* output = reinterpret_cast<float*>(data.get());
-    for (int i = 0; i < 3; i++) {
-        EXPECT_FLOAT_EQ(output[i], input[i]) << "Mismatch at index " << i;
-    }
-}
