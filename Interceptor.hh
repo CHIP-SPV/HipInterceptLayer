@@ -104,7 +104,9 @@ void capturePreState(KernelExecution& exec, const Kernel& kernel, void** args) {
                 
                 // Print pre-execution info and capture state
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                exec.pre_state.captureGpuMemory(device_ptr, info->size);
+                ArgState arg_state;
+                arg_state.captureGpuMemory(device_ptr, info->size);
+                exec.pre_args.push_back(std::move(arg_state));
             }
         } else {
             // For non-pointer types, capture the value
@@ -120,7 +122,11 @@ void capturePreState(KernelExecution& exec, const Kernel& kernel, void** args) {
             // Store the scalar value
             std::vector<char> value_data(value_size);
             std::memcpy(value_data.data(), param_value, value_size);
-            exec.scalar_values.push_back(std::move(value_data));
+            
+            // Create ArgState for the scalar value
+            ArgState arg_state(value_size, 1);
+            std::memcpy(arg_state.data.data(), value_data.data(), value_size);
+            exec.pre_args.push_back(std::move(arg_state));
             
             // Print the value using the Argument's printValue method
             arg.printValue(std::cout, param_value);
@@ -142,8 +148,19 @@ void capturePostState(KernelExecution& exec, const Kernel& kernel, void** args) 
             auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
             if (base_ptr && info) {
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                exec.post_state.captureGpuMemory(device_ptr, info->size);
+                ArgState arg_state;
+                arg_state.captureGpuMemory(device_ptr, info->size);
+                exec.post_args.push_back(std::move(arg_state));
             }
+        } else {
+            // For scalar values, capture the final state
+            size_t value_size = arg.getSize();
+            ArgState arg_state(value_size, 1);
+            std::memcpy(arg_state.data.data(), param_value, value_size);
+            exec.post_args.push_back(std::move(arg_state));
+            std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+            arg.printValue(std::cout, param_value);
+            std::cout << "\n";
         }
     }
 }

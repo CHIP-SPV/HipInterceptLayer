@@ -33,17 +33,44 @@ namespace {
         Kernel k = manager.getKernelByName(kernel.kernel_name);
         auto arguments = k.getArguments();
 
-        // Print scalar values with proper type information
-        std::cout << "Scalar Arguments:\n";
-        for (size_t i = 0; i < kernel.scalar_values.size(); i++) {
-            const auto& value = kernel.scalar_values[i];
+        std::cout << "PRE-EXECUTION ARGUMENT VALUES:\n";
+        for (size_t i = 0; i < kernel.pre_args.size(); i++) {
+            const auto& value = kernel.pre_args[i];
             const auto& arg = arguments[i];
             std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-            arg.printValue(std::cout, value.data());
+            if (arg.isPointer()) {
+                // For array arguments, print the checksum
+                float checksum = calculateChecksum(value.data.data(), value.total_size());
+                std::cout << "checksum=" << std::hex << std::setprecision(8) << checksum << std::dec;
+            } else {
+                // For scalar arguments, print the value
+                arg.printValue(std::cout, value.data.data());
+            }
+            std::cout << "\n";
+        }
+
+        std::cout << "POST-EXECUTION ARGUMENT VALUES:\n";
+        for (size_t i = 0; i < kernel.post_args.size(); i++) {
+            const auto& value = kernel.post_args[i];
+            const auto& arg = arguments[i];
+            std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+            if (arg.isPointer()) {
+                // For array arguments, print the checksum
+                float checksum = calculateChecksum(value.data.data(), value.total_size());
+                std::cout << "checksum=" << std::hex << std::setprecision(8) << checksum << std::dec;
+            } else {
+                // For scalar arguments, print the value
+                arg.printValue(std::cout, value.data.data());
+            }
             std::cout << "\n";
         }
 
     }
+}
+
+std::ostream& operator<<(std::ostream& os, const Comparator& comp) {
+    os << "Comparator comparing files: " << comp.file1 << " and " << comp.file2;
+    return os;
 }
 
 int main(int argc, char* argv[]) {

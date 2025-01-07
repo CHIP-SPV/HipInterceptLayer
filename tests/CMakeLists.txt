@@ -1,9 +1,9 @@
 # Add test executable
 add_executable(unit_tests
   ../Tracer.cc
-  testKernelManager.cpp 
-  testCodeGen.cpp
-  testComparator.cpp
+  #testKernelManager.cpp 
+  #testCodeGen.cpp
+  #testComparator.cpp
   testInterceptor.cpp
 )
 

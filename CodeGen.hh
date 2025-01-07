@@ -293,13 +293,14 @@ private:
             current_offset += arg_size;
             pointer_arg_idx++;
         } else {
-            if (scalar_arg_idx < op->scalar_values.size()) {
+            if (scalar_arg_idx < op->pre_args.size()) {
+                const auto& arg_state = op->pre_args[scalar_arg_idx];
                 ss << "    // Load scalar argument from trace\n";
-                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", sizeof("
-                   << arg.getBaseType() << "), &" << var_name
+                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " 
+                   << arg_state.total_size() << ", &" << var_name 
                    << ")) { return 1; }\n";
                 ss << "    std::cout << \"Scalar value for " << var_name << ": \" << " << var_name << " << std::endl;\n";
-                current_offset += sizeof(arg.getBaseType());
+                current_offset += arg_state.total_size();
                 scalar_arg_idx++;
             } else {
                 std::cerr << "Error: Missing scalar value for argument " << i << " of kernel " << op->kernel_name << std::endl;

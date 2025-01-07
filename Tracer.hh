@@ -36,95 +36,21 @@ hipMemcpy_fn get_real_hipMemcpy();
 #include <iomanip>
 #include "CodeGenKernelHeaders.hh"
 
-// Memory state tracking
-class MemoryState {
-public:
-    static constexpr uint32_t MAGIC_START = 0x4D454D53; // 'MEMS'
-    static constexpr uint32_t MAGIC_END = 0x454D454D;   // 'EMEM'
+// State of an argument, for both scalar and array data
+class ArgState {
+    public:
+    size_t data_type_size;  // Size of each element
+    size_t array_size;      // Number of elements (1 for scalars)
+    std::vector<char> data; // Raw bytes
 
-    struct MemoryChunk {
-        std::unique_ptr<char[]> data;
-        size_t size;
-        
-        MemoryChunk(size_t s, bool init_to_zero = true) : size(s) {
-            // Allocate memory with proper alignment for vector types
-            size_t aligned_size = ((s + 15) / 16) * 16;  // Align to 16 bytes for float4/vec4
-            
-            // Use aligned_alloc for proper alignment
-            void* aligned_ptr = nullptr;
-            if (posix_memalign(&aligned_ptr, 16, aligned_size) != 0) {
-                throw std::runtime_error("Failed to allocate aligned memory");
-            }
-            
-            // Transfer ownership to unique_ptr with custom deleter
-            data = std::unique_ptr<char[]>(static_cast<char*>(aligned_ptr));
-            
-            if (init_to_zero) {
-                std::memset(data.get(), 0, aligned_size);
-            }
+    ArgState(size_t type_size = 0, size_t arr_size = 0) 
+        : data_type_size(type_size), array_size(arr_size) {
+        if (type_size > 0 && arr_size > 0) {
+            data.resize(type_size * arr_size);
         }
-        
-        MemoryChunk(const char* src, size_t s) : size(s) {
-            // Allocate aligned memory
-            size_t aligned_size = ((s + 15) / 16) * 16;
-            
-            void* aligned_ptr = nullptr;
-            if (posix_memalign(&aligned_ptr, 16, aligned_size) != 0) {
-                throw std::runtime_error("Failed to allocate aligned memory");
-            }
-            
-            // Transfer ownership and copy data
-            data = std::unique_ptr<char[]>(static_cast<char*>(aligned_ptr));
-            std::memcpy(data.get(), src, s);
-        }
-        
-        // Add move constructor
-        MemoryChunk(MemoryChunk&& other) noexcept 
-            : data(std::move(other.data)), size(other.size) {
-            other.size = 0;
-        }
-        
-        // Add move assignment
-        MemoryChunk& operator=(MemoryChunk&& other) noexcept {
-            if (this != &other) {
-                data = std::move(other.data);
-                size = other.size;
-                other.size = 0;
-            }
-            return *this;
-        }
-        
-        // Delete copy operations
-        MemoryChunk(const MemoryChunk&) = delete;
-        MemoryChunk& operator=(const MemoryChunk&) = delete;
-    };
-    
-    std::vector<MemoryChunk> chunks;
-    size_t total_size;
-
-    // Helper method to get contiguous data for testing
-    std::unique_ptr<char[]> getData() const {
-        if (total_size == 0) return nullptr;
-        
-        // Calculate aligned size
-        size_t aligned_size = ((total_size + 15) / 16) * 16;  // Align to 16 bytes for float4/vec4
-        
-        // If there's only one chunk, return a copy of it
-        if (chunks.size() == 1) {
-            auto result = std::make_unique<char[]>(aligned_size);
-            std::memcpy(result.get(), chunks[0].data.get(), chunks[0].size);
-            return result;
-        }
-        
-        // Otherwise combine all chunks into contiguous memory
-        auto result = std::make_unique<char[]>(aligned_size);
-        size_t offset = 0;
-        for (const auto& chunk : chunks) {
-            std::memcpy(result.get() + offset, chunk.data.get(), chunk.size);
-            offset += chunk.size;
-        }
-        return result;
     }
+
+    size_t total_size() const { return data_type_size * array_size; }
 
     void captureGpuMemory(void* ptr, size_t capture_size) {
         if (!ptr || capture_size == 0) return;
@@ -137,8 +63,10 @@ public:
             return;
         }
         
-        // Create a new chunk with proper alignment
-        MemoryChunk chunk(capture_size, false);
+        // Resize the data vector to accommodate the captured memory
+        data_type_size = sizeof(char);
+        array_size = capture_size;
+        data.resize(capture_size);
         
         // Get the real hipMemcpy function
         hipMemcpy_fn real_memcpy = get_real_hipMemcpy();
@@ -147,8 +75,8 @@ public:
             return;
         }
         
-        // Copy from GPU to the chunk
-        err = real_memcpy(chunk.data.get(), ptr, capture_size, hipMemcpyDeviceToHost);
+        // Copy from GPU to the data buffer
+        err = real_memcpy(data.data(), ptr, capture_size, hipMemcpyDeviceToHost);
         if (err != hipSuccess) {
             std::cerr << "Failed to capture GPU memory at " << ptr 
                       << " of size " << capture_size 
@@ -157,144 +85,47 @@ public:
         }
 
         // Calculate and print hash
-        float checksum = calculateChecksum(chunk.data.get(), capture_size);
+        float checksum = calculateChecksum(data.data(), capture_size);
         std::cout << "Captured GPU memory at " << ptr << " size: " << capture_size 
                   << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
-        
-        total_size += capture_size;
-        chunks.push_back(std::move(chunk));
     }
 
     void captureHostMemory(void* ptr, size_t capture_size) {
         if (!ptr || capture_size == 0) return;
         
-        // Create a new chunk with proper alignment
-        MemoryChunk chunk(capture_size, false);
+        // Resize the data vector to accommodate the captured memory
+        data_type_size = sizeof(char);
+        array_size = capture_size;
+        data.resize(capture_size);
         
-        // Copy the host memory
-        std::memcpy(chunk.data.get(), ptr, capture_size);
+        // Copy the host memory directly
+        std::memcpy(data.data(), ptr, capture_size);
 
         // Calculate and print hash
-        float checksum = calculateChecksum(chunk.data.get(), capture_size);
+        float checksum = calculateChecksum(data.data(), capture_size);
         std::cout << "Captured Host memory at " << ptr << " size: " << capture_size 
                   << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
-        
-        total_size += capture_size;
-        chunks.push_back(std::move(chunk));
-    }
-    
-    explicit MemoryState(size_t s = 0) : total_size(0) {
-        if (s > 0) {
-            chunks.emplace_back(s);
-            total_size = s;
-        }
-    }
-
-    MemoryState(const char* src, size_t s) : total_size(s) {
-        if (s > 0) {
-            chunks.emplace_back(src, s);
-        }
-    }
-    
-    // Add copy constructor
-    MemoryState(const MemoryState& other) : total_size(other.total_size) {
-        chunks.reserve(other.chunks.size());
-        for (const auto& chunk : other.chunks) {
-            chunks.emplace_back(chunk.data.get(), chunk.size);
-        }
-    }
-    
-    // Add copy assignment operator
-    MemoryState& operator=(const MemoryState& other) {
-        if (this != &other) {
-            chunks.clear();
-            chunks.reserve(other.chunks.size());
-            for (const auto& chunk : other.chunks) {
-                chunks.emplace_back(chunk.data.get(), chunk.size);
-            }
-            total_size = other.total_size;
-        }
-        return *this;
-    }
-    
-    // Add move constructor
-    MemoryState(MemoryState&& other) noexcept 
-        : chunks(std::move(other.chunks)), total_size(other.total_size) {
-        other.total_size = 0;
-    }
-    
-    // Add move assignment operator
-    MemoryState& operator=(MemoryState&& other) noexcept {
-        if (this != &other) {
-            chunks = std::move(other.chunks);
-            total_size = other.total_size;
-            other.total_size = 0;
-        }
-        return *this;
     }
 
     void serialize(std::ofstream& file) const {
-        std::cout << "Serializing MemoryState of total size " << total_size << " bytes" << std::endl;
-        
-        // Write start magic
-        file.write(reinterpret_cast<const char*>(&MAGIC_START), sizeof(MAGIC_START));
-        
-        // Write total size
-        file.write(reinterpret_cast<const char*>(&total_size), sizeof(total_size));
-        
-        // Write all chunks sequentially
-        for (const auto& chunk : chunks) {
-            file.write(chunk.data.get(), chunk.size);
+        file.write(reinterpret_cast<const char*>(&data_type_size), sizeof(data_type_size));
+        file.write(reinterpret_cast<const char*>(&array_size), sizeof(array_size));
+        if (!data.empty()) {
+            file.write(data.data(), data.size());
         }
-        
-        // Write end magic
-        file.write(reinterpret_cast<const char*>(&MAGIC_END), sizeof(MAGIC_END));
     }
 
-    static MemoryState deserialize(std::ifstream& file) {
-        // Read and verify start magic
-        uint32_t magic_start;
-        file.read(reinterpret_cast<char*>(&magic_start), sizeof(magic_start));
-        if (magic_start != MAGIC_START) {
-            std::cerr << "Invalid MemoryState start magic: 0x" 
-                      << std::hex << magic_start << std::dec 
-                      << " (expected 0x" << std::hex << MAGIC_START << std::dec << ")" 
-                      << std::endl;
-            throw std::runtime_error("Invalid MemoryState format");
+    static ArgState deserialize(std::ifstream& file) {
+        ArgState arg;
+        file.read(reinterpret_cast<char*>(&arg.data_type_size), sizeof(arg.data_type_size));
+        file.read(reinterpret_cast<char*>(&arg.array_size), sizeof(arg.array_size));
+        if (arg.data_type_size > 0 && arg.array_size > 0) {
+            arg.data.resize(arg.data_type_size * arg.array_size);
+            file.read(arg.data.data(), arg.data.size());
         }
-        
-        // Read total size
-        size_t total_size;
-        file.read(reinterpret_cast<char*>(&total_size), sizeof(total_size));
-        std::cout << "Deserializing MemoryState of size " << total_size << " bytes" << std::endl;
-        
-        // Create state and read all data into a single chunk
-        MemoryState state;
-        if (total_size > 0) {
-            // Don't initialize to zero since we'll read data from file
-            state.chunks.emplace_back(total_size, false);
-            file.read(state.chunks.back().data.get(), total_size);
-            state.total_size = total_size;
-        }
-        
-        // Read and verify end magic
-        uint32_t magic_end;
-        file.read(reinterpret_cast<char*>(&magic_end), sizeof(magic_end));
-        if (magic_end != MAGIC_END) {
-            std::cerr << "Invalid MemoryState end magic: 0x" 
-                      << std::hex << magic_end << std::dec 
-                      << " (expected 0x" << std::hex << MAGIC_END << std::dec << ")" 
-                      << std::endl;
-            throw std::runtime_error("Invalid MemoryState format");
-        }
-        
-        return state;
+        return arg;
     }
 };
-
-// Forward declarations
-class KernelExecution;
-class MemoryOperation;
 
 enum class OperationType : uint32_t {
     KERNEL = 0x4B524E4C,  // 'KRNL' in ASCII
@@ -303,23 +134,21 @@ enum class OperationType : uint32_t {
 
 class Operation {
 public:
-    MemoryState pre_state;
-    MemoryState post_state;
+    std::vector<ArgState> pre_args;
+    std::vector<ArgState> post_args;
     OperationType type;
 
     bool isKernel() const { return type == OperationType::KERNEL; }
     bool isMemory() const { return type == OperationType::MEMORY; }
     
-    // Add virtual destructor
     virtual ~Operation() = default;
     
-    // Make this a friend function instead of a member function
     friend std::ostream& operator<<(std::ostream& os, const Operation& op);
 
-    Operation(MemoryState pre_state, MemoryState post_state, OperationType type)
-        : pre_state(pre_state), post_state(post_state), type(type) {}
+    Operation(std::vector<ArgState> pre, std::vector<ArgState> post, OperationType type)
+        : pre_args(std::move(pre)), post_args(std::move(post)), type(type) {}
 
-    Operation() : pre_state(), post_state() {}
+    Operation() : pre_args(), post_args() {}
 
     static std::shared_ptr<Operation> deserialize(std::ifstream& file);
 
@@ -327,7 +156,6 @@ public:
 
 protected:
     virtual void deserializeImpl(std::ifstream& file) = 0;
-    // Add pure virtual function for stream output
     virtual void writeToStream(std::ostream& os) const = 0;
 };
 
@@ -347,10 +175,9 @@ class KernelExecution : public Operation {
     hipStream_t stream;
     std::vector<void*> arg_ptrs;
     std::vector<size_t> arg_sizes;  // Sizes of pointer arguments
-    std::vector<std::vector<char>> scalar_values;  // Values of scalar arguments
     
     // Add default constructor
-    KernelExecution() : Operation(MemoryState(), MemoryState(), OperationType::KERNEL), 
+    KernelExecution() : Operation(std::vector<ArgState>(), std::vector<ArgState>(), OperationType::KERNEL), 
         function_address(nullptr),
         kernel_name(),
         grid_dim(),
@@ -360,15 +187,15 @@ class KernelExecution : public Operation {
     }
 
     // Existing constructor
-    KernelExecution(MemoryState pre_state, 
-                   MemoryState post_state,
+    KernelExecution(std::vector<ArgState> pre, 
+                   std::vector<ArgState> post,
                    void* function_address,
                    std::string kernel_name,
                    dim3 grid_dim,
                    dim3 block_dim,
                    size_t shared_mem,
                    hipStream_t stream)
-        : Operation(pre_state, post_state, OperationType::KERNEL),
+        : Operation(std::move(pre), std::move(post), OperationType::KERNEL),
           function_address(function_address),
           kernel_name(kernel_name),
           grid_dim(grid_dim),
@@ -382,8 +209,8 @@ class KernelExecution : public Operation {
         os << "KernelExecution: " << kernel_name 
            << " (grid: " << grid_dim.x << "," << grid_dim.y << "," << grid_dim.z
            << ") (block: " << block_dim.x << "," << block_dim.y << "," << block_dim.z
-           << ") pre_state: " << (pre_state.total_size > 0 ? "present" : "null")
-           << " post_state: " << (post_state.total_size > 0 ? "present" : "null");
+           << ") pre_state: " << (pre_args.size() > 0 ? "present" : "null")
+           << " post_state: " << (post_args.size() > 0 ? "present" : "null");
     }
 
     virtual void serialize(std::ofstream& file) const override {
@@ -418,27 +245,22 @@ class KernelExecution : public Operation {
         for (size_t size : arg_sizes) {
             file.write(reinterpret_cast<const char*>(&size), sizeof(size_t));
         }
-
-        // Write scalar values
-        uint32_t num_scalars = static_cast<uint32_t>(scalar_values.size());
-        file.write(reinterpret_cast<const char*>(&num_scalars), sizeof(num_scalars));
-        for (const auto& value : scalar_values) {
-            uint32_t value_size = static_cast<uint32_t>(value.size());
-            file.write(reinterpret_cast<const char*>(&value_size), sizeof(value_size));
-            file.write(value.data(), value_size);
-        }
         
         // Write memory states
-        bool has_pre_state = pre_state.total_size > 0;
+        bool has_pre_state = pre_args.size() > 0;
         file.write(reinterpret_cast<const char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state.serialize(file);
+            for (const auto& arg : pre_args) {
+                arg.serialize(file);
+            }
         }
 
-        bool has_post_state = post_state.total_size > 0;
+        bool has_post_state = post_args.size() > 0;
         file.write(reinterpret_cast<const char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state.serialize(file);
+            for (const auto& arg : post_args) {
+                arg.serialize(file);
+            }
         }
     }
 
@@ -504,35 +326,24 @@ class KernelExecution : public Operation {
             file.read(reinterpret_cast<char*>(&arg_sizes[i]), sizeof(size_t));
         }
 
-        // Read scalar values
-        uint32_t num_scalars;
-        file.read(reinterpret_cast<char*>(&num_scalars), sizeof(num_scalars));
-        if (num_scalars > 1024) {  // Add reasonable size limit
-            throw std::runtime_error("Invalid number of scalar values");
-        }
-        scalar_values.resize(num_scalars);
-        for (uint32_t i = 0; i < num_scalars; i++) {
-            uint32_t value_size;
-            file.read(reinterpret_cast<char*>(&value_size), sizeof(value_size));
-            if (value_size > 1024) {  // Add reasonable size limit
-                throw std::runtime_error("Invalid scalar value size");
-            }
-            scalar_values[i].resize(value_size);
-            file.read(scalar_values[i].data(), value_size);
-        }
-
         // Read memory states
         bool has_pre_state;
         file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state = MemoryState::deserialize(file);  // Fixed: assign the returned value
-        } 
+            pre_args.clear();
+            for (uint32_t i = 0; i < num_args; i++) {
+                pre_args.push_back(ArgState::deserialize(file));
+            }
+        }
 
         bool has_post_state;
         file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state = MemoryState::deserialize(file);  // Fixed: assign the returned value
-        } 
+            post_args.clear();
+            for (uint32_t i = 0; i < num_args; i++) {
+                post_args.push_back(ArgState::deserialize(file));
+            }
+        }
     }
 
 
@@ -549,7 +360,7 @@ class MemoryOperation : public Operation {
     hipStream_t stream;
 
     // Add default constructor
-    MemoryOperation() : Operation(MemoryState(), MemoryState(), OperationType::MEMORY),
+    MemoryOperation() : Operation(std::vector<ArgState>(), std::vector<ArgState>(), OperationType::MEMORY),
         type(MemoryOpType::COPY),
         dst(nullptr),
         src(nullptr),
@@ -560,8 +371,8 @@ class MemoryOperation : public Operation {
         }
 
     // Existing constructor
-    MemoryOperation(MemoryState pre_state,
-                   MemoryState post_state,
+    MemoryOperation(std::vector<ArgState> pre,
+                   std::vector<ArgState> post,
                    MemoryOpType type,
                    void* dst,
                    const void* src,
@@ -569,7 +380,7 @@ class MemoryOperation : public Operation {
                    int value,
                    hipMemcpyKind kind,
                    hipStream_t stream)
-        : Operation(pre_state, post_state, OperationType::MEMORY),
+        : Operation(std::move(pre), std::move(post), OperationType::MEMORY),
           type(type),
           dst(dst),
           src(src),
@@ -614,16 +425,20 @@ class MemoryOperation : public Operation {
         file.write(reinterpret_cast<const char*>(&stream), sizeof(stream));
         
         // Write memory states
-        bool has_pre_state = pre_state.total_size > 0;
+        bool has_pre_state = pre_args.size() > 0;
         file.write(reinterpret_cast<const char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state.serialize(file);
+            for (const auto& arg : pre_args) {
+                arg.serialize(file);
+            }
         }
 
-        bool has_post_state = post_state.total_size > 0;
+        bool has_post_state = post_args.size() > 0;
         file.write(reinterpret_cast<const char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state.serialize(file);
+            for (const auto& arg : post_args) {
+                arg.serialize(file);
+            }
         }
     }
 
@@ -657,17 +472,15 @@ class MemoryOperation : public Operation {
         bool has_pre_state;
         file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
-            pre_state = MemoryState::deserialize(file);
-        } else {
-            pre_state = MemoryState();
+            pre_args.clear();
+            pre_args.push_back(ArgState::deserialize(file));
         }
 
         bool has_post_state;
         file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
-            post_state = MemoryState::deserialize(file);
-        } else {
-            post_state = MemoryState();
+            post_args.clear();
+            post_args.push_back(ArgState::deserialize(file));
         }
     }
 };

@@ -35,7 +35,6 @@ TEST_F(InterceptorTest, CompareVectorAddTraceWithSource) {
     std::cout << "  Block dim: " << kernel_op->block_dim.x << "," << kernel_op->block_dim.y << "," << kernel_op->block_dim.z << std::endl;
     std::cout << "  Shared mem: " << kernel_op->shared_mem << std::endl;
     std::cout << "  Number of arguments: " << kernel_op->arg_ptrs.size() << std::endl;
-    std::cout << "  Number of scalar values: " << kernel_op->scalar_values.size() << std::endl;
     
     // Verify kernel launch parameters
     EXPECT_EQ(kernel_op->kernel_name, "vectorIncrementKernel");
@@ -44,18 +43,18 @@ TEST_F(InterceptorTest, CompareVectorAddTraceWithSource) {
     EXPECT_EQ(kernel_op->block_dim.z, 1);
     EXPECT_EQ(kernel_op->shared_mem, 0);
 
-    // Verify scalar values
-    ASSERT_EQ(kernel_op->scalar_values.size(), 2) << "Expected 2 scalar values (float4 and float)";
+    // Verify pre_args
+    ASSERT_EQ(kernel_op->pre_args.size(), 2) << "Expected 2 pre_args (float4 and float)";
     
-    // First scalar value should be float4 (16 bytes)
-    ASSERT_EQ(kernel_op->scalar_values[0].size(), 16) << "Expected float4 to be 16 bytes";
-    const float4* input_vec4 = reinterpret_cast<const float4*>(kernel_op->scalar_values[0].data());
+    // First argument should be float4 (16 bytes)
+    ASSERT_EQ(kernel_op->pre_args[0].total_size(), 16) << "Expected float4 to be 16 bytes";
+    const float4* input_vec4 = reinterpret_cast<const float4*>(kernel_op->pre_args[0].data.data());
     std::cout << "Input float4: (" << input_vec4->x << ", " << input_vec4->y << ", " 
               << input_vec4->z << ", " << input_vec4->w << ")" << std::endl;
     
-    // Second scalar value should be float (4 bytes)
-    ASSERT_EQ(kernel_op->scalar_values[1].size(), 8) << "Expected float to be 8 bytes";
-    const float* input_scalar = reinterpret_cast<const float*>(kernel_op->scalar_values[1].data());
+    // Second argument should be float (4 bytes)
+    ASSERT_EQ(kernel_op->pre_args[1].total_size(), 8) << "Expected float to be 8 bytes";
+    const float* input_scalar = reinterpret_cast<const float*>(kernel_op->pre_args[1].data.data());
     std::cout << "Input scalar: " << *input_scalar << std::endl;
 
     // Expected values from vectorAdd.cpp
@@ -70,15 +69,14 @@ TEST_F(InterceptorTest, CompareVectorAddTraceWithSource) {
     EXPECT_FLOAT_EQ(*input_scalar, expected_input_scalar);
 
     // Pre-execution state
-    auto pre_state = kernel_op->pre_state;
-    std::cout << "Pre-state total_size: " << pre_state.total_size << std::endl;
-    std::cout << "Pre-state chunks size: " << pre_state.chunks.size() << std::endl;
-    ASSERT_GT(pre_state.total_size, 0);
-    ASSERT_GT(pre_state.chunks.size(), 0) << "No chunks in pre_state";
+    ASSERT_FALSE(kernel_op->pre_args.empty()) << "No pre-execution arguments";
+    const auto& pre_arg = kernel_op->pre_args[0];  // Get first argument
+    std::cout << "Pre-arg data_type_size: " << pre_arg.data_type_size << std::endl;
+    std::cout << "Pre-arg array_size: " << pre_arg.array_size << std::endl;
+    ASSERT_GT(pre_arg.data.size(), 0);
 
-    // Get raw data from the first chunk of pre_state
-    const auto& pre_chunk = pre_state.chunks[0];
-    const float4* pre_vec4 = reinterpret_cast<const float4*>(pre_chunk.data.get());
+    // Get raw data from the first pre-argument
+    const float4* pre_vec4 = reinterpret_cast<const float4*>(pre_arg.data.data());
     const float* pre_scalar = reinterpret_cast<const float*>(pre_vec4 + 1024);  // N=1024
 
     // Print first few pre-state values
@@ -105,15 +103,14 @@ TEST_F(InterceptorTest, CompareVectorAddTraceWithSource) {
     }
 
     // Post-execution state
-    auto post_state = kernel_op->post_state;
-    std::cout << "Post-state total_size: " << post_state.total_size << std::endl;
-    std::cout << "Post-state chunks size: " << post_state.chunks.size() << std::endl;
-    ASSERT_GT(post_state.total_size, 0);
-    ASSERT_GT(post_state.chunks.size(), 0) << "No chunks in post_state";
+    ASSERT_FALSE(kernel_op->post_args.empty()) << "No post-execution arguments";
+    const auto& post_arg = kernel_op->post_args[0];  // Get first argument
+    std::cout << "Post-arg data_type_size: " << post_arg.data_type_size << std::endl;
+    std::cout << "Post-arg array_size: " << post_arg.array_size << std::endl;
+    ASSERT_GT(post_arg.data.size(), 0);
 
-    // Get raw data from the first chunk of post_state
-    const auto& post_chunk = post_state.chunks[0];
-    const float4* output_vec4 = reinterpret_cast<const float4*>(post_chunk.data.get());
+    // Get raw data from the first post-argument
+    const float4* output_vec4 = reinterpret_cast<const float4*>(post_arg.data.data());
     const float* output_scalar = reinterpret_cast<const float*>(output_vec4 + 1024);  // N=1024
 
     // Expected output values
@@ -183,7 +180,7 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
     std::cout << "  Block dim: " << kernel_op->block_dim.x << "," << kernel_op->block_dim.y << "," << kernel_op->block_dim.z << std::endl;
     std::cout << "  Shared mem: " << kernel_op->shared_mem << std::endl;
     std::cout << "  Number of arguments: " << kernel_op->arg_ptrs.size() << std::endl;
-    std::cout << "  Number of scalar values: " << kernel_op->scalar_values.size() << std::endl;
+    std::cout << "  Number of pre_args: " << kernel_op->pre_args.size() << std::endl;
     
     // Verify kernel launch parameters
     EXPECT_EQ(kernel_op->kernel_name, "computeNonbonded");
@@ -194,6 +191,22 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
     EXPECT_EQ(kernel_op->block_dim.y, 1);
     EXPECT_EQ(kernel_op->block_dim.z, 1);
     EXPECT_EQ(kernel_op->shared_mem, 0);
+
+    // Verify pre_args
+    ASSERT_EQ(kernel_op->pre_args.size(), 2) << "Expected 2 pre_args (float4 and float)";
+    
+    // Verify first argument (float4)
+    ASSERT_EQ(kernel_op->pre_args[0].total_size(), 16) << "Expected float4 to be 16 bytes";
+    const float4* input_vec4 = reinterpret_cast<const float4*>(kernel_op->pre_args[0].data.data());
+    EXPECT_FLOAT_EQ(input_vec4->x, 1.0f);
+    EXPECT_FLOAT_EQ(input_vec4->y, 2.0f);
+    EXPECT_FLOAT_EQ(input_vec4->z, 3.0f);
+    EXPECT_FLOAT_EQ(input_vec4->w, 4.0f);
+    
+    // Verify second argument (float)
+    ASSERT_EQ(kernel_op->pre_args[1].total_size(), 8) << "Expected float to be 8 bytes";
+    const float* input_scalar = reinterpret_cast<const float*>(kernel_op->pre_args[1].data.data());
+    EXPECT_FLOAT_EQ(*input_scalar, 42.0f);
 
     // Verify scalar arguments
     const float4 expected_periodic_box_size = make_float4(10.0f, 10.0f, 10.0f, 0.0f);
@@ -206,28 +219,29 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
     const unsigned int expected_start_tile_index = 0u;
     const unsigned long long expected_num_tile_indices = 128ull;
 
-    // Print and verify scalar values
+    // Print and verify scalar values from pre_args
     std::cout << "\nScalar values:" << std::endl;
-    for (size_t i = 0; i < kernel_op->scalar_values.size(); i++) {
+    for (size_t i = 0; i < kernel_op->pre_args.size(); i++) {
+        const auto& arg = kernel_op->pre_args[i];
         std::cout << "  Value " << i << ": ";
         switch(i) {
             case 0: // startTileIndex (unsigned int)
                 {
-                    unsigned int val = *reinterpret_cast<const unsigned int*>(kernel_op->scalar_values[i].data());
+                    unsigned int val = *reinterpret_cast<const unsigned int*>(arg.data.data());
                     std::cout << "startTileIndex=" << val;
                     EXPECT_EQ(val, expected_start_tile_index) << "startTileIndex should be " << expected_start_tile_index;
                 }
                 break;
             case 1: // numTileIndices (unsigned long long)
                 {
-                    unsigned long long val = *reinterpret_cast<const unsigned long long*>(kernel_op->scalar_values[i].data());
+                    unsigned long long val = *reinterpret_cast<const unsigned long long*>(arg.data.data());
                     std::cout << "numTileIndices=" << val;
                     EXPECT_EQ(val, expected_num_tile_indices) << "numTileIndices should be " << expected_num_tile_indices;
                 }
                 break;
             case 2: // periodicBoxSize (float4)
                 {
-                    const float4* vec = reinterpret_cast<const float4*>(kernel_op->scalar_values[i].data());
+                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
                     std::cout << "periodicBoxSize=(" << vec->x << ", " << vec->y << ", " 
                              << vec->z << ", " << vec->w << ")";
                     EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_size.x);
@@ -238,7 +252,7 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
                 break;
             case 3: // invPeriodicBoxSize (float4)
                 {
-                    const float4* vec = reinterpret_cast<const float4*>(kernel_op->scalar_values[i].data());
+                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
                     std::cout << "invPeriodicBoxSize=(" << vec->x << ", " << vec->y << ", " 
                              << vec->z << ", " << vec->w << ")";
                     EXPECT_FLOAT_EQ(vec->x, expected_inv_periodic_box_size.x);
@@ -249,7 +263,7 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
                 break;
             case 4: // periodicBoxVecX (float4)
                 {
-                    const float4* vec = reinterpret_cast<const float4*>(kernel_op->scalar_values[i].data());
+                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
                     std::cout << "periodicBoxVecX=(" << vec->x << ", " << vec->y << ", " 
                              << vec->z << ", " << vec->w << ")";
                     EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_vec_x.x);
@@ -260,7 +274,7 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
                 break;
             case 5: // periodicBoxVecY (float4)
                 {
-                    const float4* vec = reinterpret_cast<const float4*>(kernel_op->scalar_values[i].data());
+                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
                     std::cout << "periodicBoxVecY=(" << vec->x << ", " << vec->y << ", " 
                              << vec->z << ", " << vec->w << ")";
                     EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_vec_y.x);
@@ -271,7 +285,7 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
                 break;
             case 6: // periodicBoxVecZ (float4)
                 {
-                    const float4* vec = reinterpret_cast<const float4*>(kernel_op->scalar_values[i].data());
+                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
                     std::cout << "periodicBoxVecZ=(" << vec->x << ", " << vec->y << ", " 
                              << vec->z << ", " << vec->w << ")";
                     EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_vec_z.x);
@@ -282,14 +296,14 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
                 break;
             case 7: // maxTiles (unsigned int)
                 {
-                    unsigned int val = *reinterpret_cast<const unsigned int*>(kernel_op->scalar_values[i].data());
+                    unsigned int val = *reinterpret_cast<const unsigned int*>(arg.data.data());
                     std::cout << "maxTiles=" << val;
                     EXPECT_EQ(val, expected_max_tiles) << "maxTiles should be " << expected_max_tiles;
                 }
                 break;
             case 8: // maxSinglePairs (unsigned int)
                 {
-                    unsigned int val = *reinterpret_cast<const unsigned int*>(kernel_op->scalar_values[i].data());
+                    unsigned int val = *reinterpret_cast<const unsigned int*>(arg.data.data());
                     std::cout << "maxSinglePairs=" << val;
                     EXPECT_EQ(val, expected_max_single_pairs) << "maxSinglePairs should be " << expected_max_single_pairs;
                 }
@@ -301,15 +315,14 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
     }
 
     // Pre-execution state
-    auto pre_state = kernel_op->pre_state;
-    std::cout << "Pre-state total_size: " << pre_state.total_size << std::endl;
-    std::cout << "Pre-state chunks size: " << pre_state.chunks.size() << std::endl;
-    ASSERT_GT(pre_state.total_size, 0);
-    ASSERT_GT(pre_state.chunks.size(), 0) << "No chunks in pre_state";
+    ASSERT_FALSE(kernel_op->pre_args.empty()) << "No pre-execution arguments";
+    const auto& pre_arg = kernel_op->pre_args[0];  // Get first argument
+    std::cout << "Pre-arg data_type_size: " << pre_arg.data_type_size << std::endl;
+    std::cout << "Pre-arg array_size: " << pre_arg.array_size << std::endl;
+    ASSERT_GT(pre_arg.data.size(), 0);
 
-    // Get pointers to the different arrays in pre_state using the first chunk
-    const auto& pre_chunk = pre_state.chunks[0];
-    const char* pre_data = pre_chunk.data.get();
+    // Get pointers to the different arrays in pre_state
+    const char* pre_data = pre_arg.data.data();
     const unsigned long long* force_buffers = reinterpret_cast<const unsigned long long*>(pre_data);
     const float* energy_buffer = reinterpret_cast<const float*>(force_buffers + 128);  // N=128
     const float4* posq = reinterpret_cast<const float4*>(energy_buffer + 128);
@@ -421,19 +434,18 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
     }
 
     // Post-execution state
-    auto post_state = kernel_op->post_state;
-    std::cout << "Post-state total_size: " << post_state.total_size << std::endl;
-    std::cout << "Post-state chunks size: " << post_state.chunks.size() << std::endl;
-    ASSERT_GT(post_state.total_size, 0);
-    ASSERT_GT(post_state.chunks.size(), 0) << "No chunks in post_state";
+    ASSERT_FALSE(kernel_op->post_args.empty()) << "No post-execution arguments";
+    const auto& post_arg = kernel_op->post_args[0];  // Get first argument
+    std::cout << "Post-arg data_type_size: " << post_arg.data_type_size << std::endl;
+    std::cout << "Post-arg array_size: " << post_arg.array_size << std::endl;
+    ASSERT_GT(post_arg.data.size(), 0);
 
-    // Get pointers to the arrays in post_state using the first chunk
-    const auto& post_chunk = post_state.chunks[0];
-    const char* post_data = post_chunk.data.get();
+    // Get pointers to the arrays in post_state
+    const char* post_data = post_arg.data.data();
     const unsigned long long* post_force_buffers = reinterpret_cast<const unsigned long long*>(post_data);
     const float* post_energy_buffer = reinterpret_cast<const float*>(post_force_buffers + 128);
     const float4* post_posq = reinterpret_cast<const float4*>(post_energy_buffer + 128);
-    const tileflags* post_exclusions = reinterpret_cast<const tileflags*>(post_posq + 128);
+    const unsigned int* post_exclusions = reinterpret_cast<const unsigned int*>(post_posq + 128);
     const int2* post_exclusion_tiles = reinterpret_cast<const int2*>(post_exclusions + 128);
     const int* post_tiles = reinterpret_cast<const int*>(post_exclusion_tiles + 128);
     const unsigned int* post_interaction_count = reinterpret_cast<const unsigned int*>(post_tiles + 128);

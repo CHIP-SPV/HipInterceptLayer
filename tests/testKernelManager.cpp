@@ -392,131 +392,67 @@ TEST_F(KernelManagerTest, HIPVectorTypeHandling) {
     std::remove(temp_filename.c_str());
 }
 
-TEST(KernelExecutionTest, MemoryStateHandling) {
-    // Create test memory states
-    auto pre_state = MemoryState(1024);  // 1KB pre state
-    auto post_state = MemoryState(2048); // 2KB post state
+TEST(KernelExecutionTest, ArgumentHandling) {
+    // Create test arguments
+    std::vector<ArgState> pre_args;
+    std::vector<ArgState> post_args;
 
-    // Initialize data with patterns
-    {
-        // Initialize pre-state data directly in the chunk
-        char* pre_data = pre_state.chunks[0].data.get();
-        for (size_t i = 0; i < 1024; i++) {
-            pre_data[i] = static_cast<char>(i & 0xFF);
-        }
-    }
-    {
-        // Initialize post-state data directly in the chunk
-        char* post_data = post_state.chunks[0].data.get();
-        for (size_t i = 0; i < 2048; i++) {
-            post_data[i] = static_cast<char>((i * 2) & 0xFF);
-        }
-    }
+    // Create a scalar argument
+    ArgState scalar_arg(sizeof(int), 1);
+    int scalar_value = 42;
+    std::memcpy(scalar_arg.data.data(), &scalar_value, sizeof(int));
+    pre_args.push_back(scalar_arg);
 
-    // Setup kernel execution parameters
-    std::string kernel_name = "test_kernel";
-    std::cout << "Original kernel name: " << kernel_name << " length: " << kernel_name.length() << std::endl;
+    // Create an array argument
+    ArgState array_arg(sizeof(float), 4);
+    float array_values[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    std::memcpy(array_arg.data.data(), array_values, sizeof(float) * 4);
+    pre_args.push_back(array_arg);
+
+    // Create a kernel execution with these arguments
+    KernelExecution exec(
+        pre_args,
+        post_args,
+        nullptr,
+        "test_kernel",
+        dim3(1, 1, 1),
+        dim3(1, 1, 1),
+        0,
+        nullptr
+    );
+
+    // Test serialization
+    std::ofstream out_file("test_kernel.bin", std::ios::binary);
+    exec.serialize(out_file);
+    out_file.close();
+
+    // Test deserialization
+    std::ifstream in_file("test_kernel.bin", std::ios::binary);
+    auto deserialized = KernelExecution::create_from_file(in_file);
+    in_file.close();
+
+    // Verify the deserialized data
+    ASSERT_EQ(deserialized->kernel_name, "test_kernel");
+    ASSERT_EQ(deserialized->pre_args.size(), 2);
     
-    void* function_ptr = reinterpret_cast<void*>(0x12345678);  // Dummy function pointer
-    dim3 grid(2, 2, 1);
-    dim3 block(32, 1, 1);
-    size_t shared_mem = 1024;
-    hipStream_t stream = nullptr;
+    // Verify scalar argument
+    const auto& deserialized_scalar = deserialized->pre_args[0];
+    ASSERT_EQ(deserialized_scalar.data_type_size, sizeof(int));
+    ASSERT_EQ(deserialized_scalar.array_size, 1);
+    int deserialized_value;
+    std::memcpy(&deserialized_value, deserialized_scalar.data.data(), sizeof(int));
+    ASSERT_EQ(deserialized_value, 42);
 
-    // Setup kernel arguments
-    std::vector<void*> arg_ptrs = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000)};
-    std::vector<size_t> arg_sizes = {sizeof(int*), sizeof(float*)};
-    
-    // Setup scalar values
-    int scalar1 = 42;
-    float scalar2 = 3.14f;
-    std::vector<std::vector<char>> scalar_values;
-    scalar_values.emplace_back(sizeof(int));
-    scalar_values.emplace_back(sizeof(float));
-    std::memcpy(scalar_values[0].data(), &scalar1, sizeof(int));
-    std::memcpy(scalar_values[1].data(), &scalar2, sizeof(float));
-
-    // Create kernel execution with these states
-    KernelExecution exec(pre_state, post_state, function_ptr, kernel_name,
-                        grid, block, shared_mem, stream);
-    exec.arg_ptrs = arg_ptrs;
-    exec.arg_sizes = arg_sizes;
-    exec.scalar_values = std::move(scalar_values);
-
-    std::cout << "Before serialization, kernel name: " << exec.kernel_name << " length: " << exec.kernel_name.length() << std::endl;
-
-    // Test serialization/deserialization
-    std::string temp_filename = "test_kernel.bin";
-    {
-        std::ofstream file(temp_filename, std::ios::binary);
-        ASSERT_TRUE(file.is_open());
-        exec.serialize(file);
-        file.close();
-    }
-
-    // Verify the file was written and has content
-    {
-        std::ifstream check_file(temp_filename, std::ios::binary | std::ios::ate);
-        ASSERT_TRUE(check_file.is_open());
-        std::streamsize size = check_file.tellg();
-        std::cout << "Serialized file size: " << size << " bytes" << std::endl;
-        ASSERT_GT(size, 0);
-        check_file.close();
-    }
-
-    std::shared_ptr<KernelExecution> exec2;
-    {
-        std::ifstream file(temp_filename, std::ios::binary);
-        ASSERT_TRUE(file.is_open());
-        exec2 = KernelExecution::create_from_file(file);
-        file.close();
-    }
-
-    ASSERT_NE(exec2, nullptr);
-    std::cout << "After deserialization, kernel name: " << exec2->kernel_name << " length: " << exec2->kernel_name.length() << std::endl;
-
-    // Verify states are preserved after deserialization
-    ASSERT_EQ(exec2->pre_state.total_size, 1024);
-    ASSERT_EQ(exec2->post_state.total_size, 2048);
-    ASSERT_EQ(exec2->function_address, function_ptr);
-    ASSERT_EQ(exec2->grid_dim.x, grid.x);
-    ASSERT_EQ(exec2->grid_dim.y, grid.y);
-    ASSERT_EQ(exec2->block_dim.x, block.x);
-    ASSERT_EQ(exec2->block_dim.y, block.y);
-    ASSERT_EQ(exec2->shared_mem, shared_mem);
-    ASSERT_EQ(exec2->stream, stream);
-    ASSERT_EQ(exec2->arg_ptrs.size(), 2);
-    ASSERT_EQ(exec2->arg_sizes.size(), 2);
-    ASSERT_EQ(exec2->scalar_values.size(), 2);
-
-    // Verify scalar values are preserved
-    ASSERT_EQ(exec2->scalar_values[0].size(), sizeof(int));
-    ASSERT_EQ(exec2->scalar_values[1].size(), sizeof(float));
-    int deserialized_scalar1;
-    float deserialized_scalar2;
-    std::memcpy(&deserialized_scalar1, exec2->scalar_values[0].data(), sizeof(int));
-    std::memcpy(&deserialized_scalar2, exec2->scalar_values[1].data(), sizeof(float));
-    ASSERT_EQ(deserialized_scalar1, scalar1);
-    ASSERT_FLOAT_EQ(deserialized_scalar2, scalar2);
-
-    // Verify data is preserved after deserialization
-    {
-        auto pre_data = exec2->pre_state.getData();
-        auto post_data = exec2->post_state.getData();
-        
-        // Verify pre-state data
-        for (size_t i = 0; i < 1024; i++) {
-            ASSERT_EQ(static_cast<unsigned char>(pre_data.get()[i]), 
-                     static_cast<unsigned char>(i & 0xFF));
-        }
-        
-        // Verify post-state data
-        for (size_t i = 0; i < 2048; i++) {
-            ASSERT_EQ(static_cast<unsigned char>(post_data.get()[i]), 
-                     static_cast<unsigned char>((i * 2) & 0xFF));
-        }
+    // Verify array argument
+    const auto& deserialized_array = deserialized->pre_args[1];
+    ASSERT_EQ(deserialized_array.data_type_size, sizeof(float));
+    ASSERT_EQ(deserialized_array.array_size, 4);
+    float deserialized_array[4];
+    std::memcpy(deserialized_array, deserialized_array.data.data(), sizeof(float) * 4);
+    for (int i = 0; i < 4; i++) {
+        ASSERT_FLOAT_EQ(deserialized_array[i], array_values[i]);
     }
 
     // Clean up
-    std::remove(temp_filename.c_str());
+    std::remove("test_kernel.bin");
 }
