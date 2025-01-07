@@ -565,3 +565,92 @@ TEST(KernelExecutionTest, ArgumentHandling) {
     // Clean up
     std::remove("test_kernel.bin");
 }
+
+TEST_F(KernelManagerTest, CompoundTypesParsing) {
+    KernelManager manager;
+    
+    // Create a test kernel source with various compound types
+    const std::string test_source = R"(
+        __global__ void compoundTypesKernel(
+            unsigned int value,
+            unsigned long long counter,
+            unsigned int *ptr,
+            unsigned int unnamed,
+            int x,
+            float *fptr,
+            HIP_vector_type<float, 4> vec,
+            unsigned short ushort_val,
+            unsigned char uchar_val,
+            uint64_t uint64_val,
+            int64_t int64_val,
+            uint32_t uint32_val,
+            int32_t int32_val,
+            uint16_t uint16_val,
+            int16_t int16_val,
+            uint8_t uint8_val,
+            int8_t int8_val
+        ) {}
+    )";
+
+    manager.addFromModuleSource(test_source);
+    Kernel kernel = manager.getKernelByName("compoundTypesKernel");
+    auto args = kernel.getArguments();
+
+    // Test compound types
+    EXPECT_EQ(args[0].getType(), "unsigned int");
+    EXPECT_EQ(args[0].getName(), "value");
+
+    EXPECT_EQ(args[1].getType(), "unsigned long long");
+    EXPECT_EQ(args[1].getName(), "counter");
+
+    EXPECT_EQ(args[2].getType(), "unsigned int*");
+    EXPECT_EQ(args[2].getName(), "ptr");
+
+    // Test auto-naming when no name provided
+    EXPECT_EQ(args[3].getType(), "unsigned int");
+    EXPECT_EQ(args[3].getName(), "unnamed");
+
+    // Test regular types
+    EXPECT_EQ(args[4].getType(), "int");
+    EXPECT_EQ(args[4].getName(), "x");
+
+    // Test pointer types
+    EXPECT_EQ(args[5].getType(), "float*");
+    EXPECT_EQ(args[5].getName(), "fptr");
+
+    // Test template types
+    EXPECT_EQ(args[6].getType(), "HIP_vector_type<float, 4>");
+    EXPECT_EQ(args[6].getName(), "vec");
+
+    // Test additional integer types
+    EXPECT_EQ(args[7].getType(), "unsigned short");
+    EXPECT_EQ(args[7].getName(), "ushort_val");
+
+    EXPECT_EQ(args[8].getType(), "unsigned char");
+    EXPECT_EQ(args[8].getName(), "uchar_val");
+
+    EXPECT_EQ(args[9].getType(), "uint64_t");
+    EXPECT_EQ(args[9].getName(), "uint64_val");
+
+    EXPECT_EQ(args[10].getType(), "int64_t");
+    EXPECT_EQ(args[10].getName(), "int64_val");
+
+    EXPECT_EQ(args[11].getType(), "uint32_t");
+    EXPECT_EQ(args[11].getName(), "uint32_val");
+
+    EXPECT_EQ(args[12].getType(), "int32_t");
+    EXPECT_EQ(args[12].getName(), "int32_val");
+
+    EXPECT_EQ(args[13].getType(), "uint16_t");
+    EXPECT_EQ(args[13].getName(), "uint16_val");
+
+    EXPECT_EQ(args[14].getType(), "int16_t");
+    EXPECT_EQ(args[14].getName(), "int16_val");
+
+    EXPECT_EQ(args[15].getType(), "uint8_t");
+    EXPECT_EQ(args[15].getName(), "uint8_val");
+
+    EXPECT_EQ(args[16].getType(), "int8_t");
+    EXPECT_EQ(args[16].getName(), "int8_val");
+}
+
