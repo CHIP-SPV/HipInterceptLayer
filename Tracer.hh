@@ -250,6 +250,8 @@ class KernelExecution : public Operation {
         bool has_pre_state = pre_args.size() > 0;
         file.write(reinterpret_cast<const char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
+            uint32_t pre_args_count = pre_args.size();
+            file.write(reinterpret_cast<const char*>(&pre_args_count), sizeof(pre_args_count));
             for (const auto& arg : pre_args) {
                 arg.serialize(file);
             }
@@ -258,6 +260,8 @@ class KernelExecution : public Operation {
         bool has_post_state = post_args.size() > 0;
         file.write(reinterpret_cast<const char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
+            uint32_t post_args_count = post_args.size();
+            file.write(reinterpret_cast<const char*>(&post_args_count), sizeof(post_args_count));
             for (const auto& arg : post_args) {
                 arg.serialize(file);
             }
@@ -330,8 +334,13 @@ class KernelExecution : public Operation {
         bool has_pre_state;
         file.read(reinterpret_cast<char*>(&has_pre_state), sizeof(has_pre_state));
         if (has_pre_state) {
+            uint32_t pre_args_count;
+            file.read(reinterpret_cast<char*>(&pre_args_count), sizeof(pre_args_count));
+            if (pre_args_count > 1024) {  // Add reasonable size limit
+                throw std::runtime_error("Invalid number of pre-execution arguments");
+            }
             pre_args.clear();
-            for (uint32_t i = 0; i < num_args; i++) {
+            for (uint32_t i = 0; i < pre_args_count; i++) {
                 pre_args.push_back(ArgState::deserialize(file));
             }
         }
@@ -339,8 +348,13 @@ class KernelExecution : public Operation {
         bool has_post_state;
         file.read(reinterpret_cast<char*>(&has_post_state), sizeof(has_post_state));
         if (has_post_state) {
+            uint32_t post_args_count;
+            file.read(reinterpret_cast<char*>(&post_args_count), sizeof(post_args_count));
+            if (post_args_count > 1024) {  // Add reasonable size limit
+                throw std::runtime_error("Invalid number of post-execution arguments");
+            }
             post_args.clear();
-            for (uint32_t i = 0; i < num_args; i++) {
+            for (uint32_t i = 0; i < post_args_count; i++) {
                 post_args.push_back(ArgState::deserialize(file));
             }
         }

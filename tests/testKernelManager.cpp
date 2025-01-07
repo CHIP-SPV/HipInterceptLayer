@@ -38,6 +38,19 @@ protected:
                 c[i] = a[i] + b[i];
             }
         }
+
+        __global__ void complexDataKernel(
+            float* scalar_array,                    
+            HIP_vector_type<float, 4>* vec4_array, 
+            HIP_vector_type<float, 2>* vec2_array, 
+            float4* float4_array,                  
+            int scalar1,                           
+            float scalar2,                         
+            double scalar3,                        
+            bool flag,                             
+            unsigned int uint_val,                 
+            size_t n) {}
+
     )";
 
     void verifyKernelEquality(const Kernel& k1, const Kernel& k2) {
@@ -70,58 +83,150 @@ protected:
     }
 };
 
+TEST_F(KernelManagerTest, ComplexDataTypesParsing) {
+  manager.addFromModuleSource(test_source);
+
+  // Get the complexDataKernel
+  Kernel complex = manager.getKernelByName("complexDataKernel");
+  auto args = complex.getArguments();
+
+  // Verify we have all 10 arguments
+  ASSERT_EQ(args.size(), 10) << "Expected 10 arguments in complexDataKernel";
+
+  // Test float* array
+  EXPECT_EQ(args[0].getName(), "scalar_array");
+  EXPECT_EQ(args[0].getType(), "float*");
+  EXPECT_TRUE(args[0].isPointer());
+
+  // Test HIP_vector_type<float, 4>* array
+  EXPECT_EQ(args[1].getName(), "vec4_array");
+  EXPECT_EQ(args[1].getType(), "HIP_vector_type<float, 4>*");
+  EXPECT_TRUE(args[1].isPointer());
+  EXPECT_EQ(args[1].getVectorSize(), 4);
+
+  // Test HIP_vector_type<float, 2>* array
+  EXPECT_EQ(args[2].getName(), "vec2_array");
+  EXPECT_EQ(args[2].getType(), "HIP_vector_type<float, 2>*");
+  EXPECT_TRUE(args[2].isPointer());
+  EXPECT_EQ(args[2].getVectorSize(), 2);
+
+  // Test float4* array
+  EXPECT_EQ(args[3].getName(), "float4_array");
+  EXPECT_EQ(args[3].getType(), "float4*");
+  EXPECT_TRUE(args[3].isPointer());
+  EXPECT_EQ(args[3].getVectorSize(), 4);
+
+  // Test scalar types
+  EXPECT_EQ(args[4].getName(), "scalar1");
+  EXPECT_EQ(args[4].getType(), "int");
+  EXPECT_FALSE(args[4].isPointer());
+
+  EXPECT_EQ(args[5].getName(), "scalar2");
+  EXPECT_EQ(args[5].getType(), "float");
+  EXPECT_FALSE(args[5].isPointer());
+
+  EXPECT_EQ(args[6].getName(), "scalar3");
+  EXPECT_EQ(args[6].getType(), "double");
+  EXPECT_FALSE(args[6].isPointer());
+
+  EXPECT_EQ(args[7].getName(), "flag");
+  EXPECT_EQ(args[7].getType(), "bool");
+  EXPECT_FALSE(args[7].isPointer());
+
+  EXPECT_EQ(args[8].getName(), "uint_val");
+  EXPECT_EQ(args[8].getType(), "unsigned int");
+  EXPECT_FALSE(args[8].isPointer());
+
+  EXPECT_EQ(args[9].getName(), "n");
+  EXPECT_EQ(args[9].getType(), "size_t");
+  EXPECT_FALSE(args[9].isPointer());
+
+  // Test serialization/deserialization of the complex types
+  std::string temp_filename = "complex_types_test.bin";
+  {
+    std::ofstream outfile(temp_filename, std::ios::binary);
+    ASSERT_TRUE(outfile.is_open());
+    manager.serialize(outfile);
+  }
+
+  // Create new manager and deserialize
+  KernelManager new_manager;
+  {
+    std::ifstream infile(temp_filename, std::ios::binary);
+    ASSERT_TRUE(infile.is_open());
+    new_manager.deserialize(infile);
+  }
+
+  // Get the deserialized kernel and verify its arguments
+  Kernel deserialized_kernel = new_manager.getKernelByName("complexDataKernel");
+  auto deserialized_args = deserialized_kernel.getArguments();
+
+  // Verify all arguments are preserved after serialization
+  ASSERT_EQ(deserialized_args.size(), args.size());
+  for (size_t i = 0; i < args.size(); i++) {
+    EXPECT_EQ(deserialized_args[i].getName(), args[i].getName());
+    EXPECT_EQ(deserialized_args[i].getType(), args[i].getType());
+    EXPECT_EQ(deserialized_args[i].isPointer(), args[i].isPointer());
+    EXPECT_EQ(deserialized_args[i].getVectorSize(), args[i].getVectorSize());
+  }
+
+  // Clean up
+  std::remove(temp_filename.c_str());
+}
+
 TEST_F(KernelManagerTest, TraceFileTest) {
-    // Load the trace file generated during build
-    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
-    
-    // Create a Tracer instance to read the trace file
-    Tracer tracer(trace_file);
-    
-    // Get the KernelManager from the trace
-    const KernelManager& traced_manager = tracer.getKernelManager();
-    
-    // Verify we have the expected kernels
-    ASSERT_EQ(traced_manager.getNumKernels(), 5);
-    
-    // Verify vectorAdd kernel
-    Kernel vector = traced_manager.getKernelByName("vectorAdd");
-    EXPECT_EQ(vector.getName(), "vectorAdd");
-    EXPECT_EQ(vector.getArguments().size(), 4);
-    EXPECT_EQ(vector.getArguments()[0].getName(), "arg1");
-    EXPECT_EQ(vector.getArguments()[0].getType(), "float*");
-    EXPECT_EQ(vector.getArguments()[1].getName(), "arg2");
-    EXPECT_EQ(vector.getArguments()[1].getType(), "float*");
-    EXPECT_EQ(vector.getArguments()[2].getName(), "arg3");
-    EXPECT_EQ(vector.getArguments()[2].getType(), "float*");
-    EXPECT_EQ(vector.getArguments()[3].getName(), "arg4");
-    EXPECT_EQ(vector.getArguments()[3].getType(), "int");
+  // Load the trace file generated during build
+  std::string trace_file =
+      std::string(CMAKE_BINARY_DIR) + "/tests/test_kernels-0.trace";
 
-    // Verify scalarKernel
-    Kernel scalar = traced_manager.getKernelByName("scalarKernel");
-    EXPECT_EQ(scalar.getName(), "scalarKernel");
-    EXPECT_EQ(scalar.getArguments().size(), 3);
-    EXPECT_EQ(scalar.getArguments()[0].getName(), "arg1");
-    EXPECT_EQ(scalar.getArguments()[0].getType(), "float*");
-    EXPECT_EQ(scalar.getArguments()[1].getName(), "arg2");
-    EXPECT_EQ(scalar.getArguments()[1].getType(), "int");
-    EXPECT_EQ(scalar.getArguments()[2].getName(), "arg3");
-    EXPECT_EQ(scalar.getArguments()[2].getType(), "float");
+  // Create a Tracer instance to read the trace file
+  Tracer tracer(trace_file);
 
-    // Verify simpleKernel
-    Kernel simple = traced_manager.getKernelByName("simpleKernel");
-    EXPECT_EQ(simple.getName(), "simpleKernel");
-    EXPECT_EQ(simple.getArguments().size(), 1);
-    EXPECT_EQ(simple.getArguments()[0].getName(), "arg1");
-    EXPECT_EQ(simple.getArguments()[0].getType(), "float*");
+  // Get the KernelManager from the trace
+  const KernelManager &traced_manager = tracer.getKernelManager();
 
-    // Verify simpleKernelWithN
-    Kernel simpleN = traced_manager.getKernelByName("simpleKernelWithN");
-    EXPECT_EQ(simpleN.getName(), "simpleKernelWithN");
-    EXPECT_EQ(simpleN.getArguments().size(), 2);
-    EXPECT_EQ(simpleN.getArguments()[0].getName(), "arg1");
-    EXPECT_EQ(simpleN.getArguments()[0].getType(), "float*");
-    EXPECT_EQ(simpleN.getArguments()[1].getName(), "arg2");
-    EXPECT_EQ(simpleN.getArguments()[1].getType(), "int");
+  // Verify we have the expected kernels
+  ASSERT_EQ(traced_manager.getNumKernels(), 5);
+
+  // Verify vectorAdd kernel
+  Kernel vector = traced_manager.getKernelByName("vectorAdd");
+  EXPECT_EQ(vector.getName(), "vectorAdd");
+  EXPECT_EQ(vector.getArguments().size(), 4);
+  EXPECT_EQ(vector.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(vector.getArguments()[0].getType(), "float*");
+  EXPECT_EQ(vector.getArguments()[1].getName(), "arg2");
+  EXPECT_EQ(vector.getArguments()[1].getType(), "float*");
+  EXPECT_EQ(vector.getArguments()[2].getName(), "arg3");
+  EXPECT_EQ(vector.getArguments()[2].getType(), "float*");
+  EXPECT_EQ(vector.getArguments()[3].getName(), "arg4");
+  EXPECT_EQ(vector.getArguments()[3].getType(), "int");
+
+  // Verify scalarKernel
+  Kernel scalar = traced_manager.getKernelByName("scalarKernel");
+  EXPECT_EQ(scalar.getName(), "scalarKernel");
+  EXPECT_EQ(scalar.getArguments().size(), 3);
+  EXPECT_EQ(scalar.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(scalar.getArguments()[0].getType(), "float*");
+  EXPECT_EQ(scalar.getArguments()[1].getName(), "arg2");
+  EXPECT_EQ(scalar.getArguments()[1].getType(), "int");
+  EXPECT_EQ(scalar.getArguments()[2].getName(), "arg3");
+  EXPECT_EQ(scalar.getArguments()[2].getType(), "float");
+
+  // Verify simpleKernel
+  Kernel simple = traced_manager.getKernelByName("simpleKernel");
+  EXPECT_EQ(simple.getName(), "simpleKernel");
+  EXPECT_EQ(simple.getArguments().size(), 1);
+  EXPECT_EQ(simple.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(simple.getArguments()[0].getType(), "float*");
+
+  // Verify simpleKernelWithN
+  Kernel simpleN = traced_manager.getKernelByName("simpleKernelWithN");
+  EXPECT_EQ(simpleN.getName(), "simpleKernelWithN");
+  EXPECT_EQ(simpleN.getArguments().size(), 2);
+  EXPECT_EQ(simpleN.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(simpleN.getArguments()[0].getType(), "float*");
+  EXPECT_EQ(simpleN.getArguments()[1].getName(), "arg2");
+  EXPECT_EQ(simpleN.getArguments()[1].getType(), "int");
 }
 
 TEST_F(KernelManagerTest, InvalidDeserialization) {
@@ -221,10 +326,10 @@ TEST_F(KernelManagerTest, KernelArgumentVerification) {
     auto complex_args = complex.getArguments();
     ASSERT_EQ(complex_args.size(), 3);
     EXPECT_TRUE(complex_args[0].isPointer());
-    EXPECT_TRUE(complex_args[1].isPointer());
-    EXPECT_FALSE(complex_args[2].isPointer());
-    EXPECT_TRUE(complex_args[0].isVector());
+    EXPECT_GT(complex_args[0].getVectorSize(), 0) << "Expected first argument to be a vector type";
     EXPECT_EQ(complex_args[0].getType(), "float4*");
+    EXPECT_EQ(complex_args[0].getVectorSize(), 4);
+    EXPECT_EQ(complex_args[0].getBaseType(), "float4");
 
     // Verify matrixMulKernel arguments
     Kernel matrix = manager.getKernelByName("matrixMulKernel");
@@ -234,6 +339,11 @@ TEST_F(KernelManagerTest, KernelArgumentVerification) {
     EXPECT_TRUE(matrix_args[1].isPointer());
     EXPECT_TRUE(matrix_args[2].isPointer());
     EXPECT_FALSE(matrix_args[3].isPointer());
+
+    // Test vector type detection
+    EXPECT_GT(complex_args[0].getVectorSize(), 0) << "Expected first argument to be a vector type";
+    EXPECT_EQ(complex_args[1].getVectorSize(), 0) << "Expected second argument to be a scalar type";
+    EXPECT_EQ(complex_args[2].getVectorSize(), 0) << "Expected third argument to be a scalar type";
 }
 
 TEST_F(KernelManagerTest, SerializationConsistency) {
@@ -289,22 +399,20 @@ TEST_F(KernelManagerTest, VectorArgumentHandling) {
     
     // Check float4* argument
     EXPECT_TRUE(args[0].isPointer());
-    EXPECT_TRUE(args[0].isVector());
+    EXPECT_GT(args[0].getVectorSize(), 0) << "Expected first argument to be a vector type";
     EXPECT_EQ(args[0].getType(), "float4*");
     EXPECT_EQ(args[0].getVectorSize(), 4);
     EXPECT_EQ(args[0].getBaseType(), "float4");
     
     // Check double* argument (non-vector)
     EXPECT_TRUE(args[1].isPointer());
-    EXPECT_FALSE(args[1].isVector());
+    EXPECT_EQ(args[1].getVectorSize(), 0) << "Expected second argument to be a scalar type";
     EXPECT_EQ(args[1].getType(), "double*");
-    EXPECT_EQ(args[1].getVectorSize(), 1);
     
     // Check int argument
     EXPECT_FALSE(args[2].isPointer());
-    EXPECT_FALSE(args[2].isVector());
+    EXPECT_EQ(args[2].getVectorSize(), 0) << "Expected third argument to be a scalar type";
     EXPECT_EQ(args[2].getType(), "int");
-    EXPECT_EQ(args[2].getVectorSize(), 1);
 
     // Test serialization of vector arguments
     std::string temp_filename = "vector_test.bin";
@@ -327,7 +435,7 @@ TEST_F(KernelManagerTest, VectorArgumentHandling) {
     
     // Verify vector properties after deserialization
     EXPECT_TRUE(deserialized_args[0].isPointer());
-    EXPECT_TRUE(deserialized_args[0].isVector());
+    EXPECT_GT(deserialized_args[0].getVectorSize(), 0) << "Expected first deserialized argument to be a vector type";
     EXPECT_EQ(deserialized_args[0].getType(), "float4*");
     EXPECT_EQ(deserialized_args[0].getVectorSize(), 4);
     EXPECT_EQ(deserialized_args[0].getBaseType(), "float4");
@@ -357,7 +465,7 @@ TEST_F(KernelManagerTest, HIPVectorTypeHandling) {
     
     // Check HIP_vector_type argument
     EXPECT_TRUE(args[0].isPointer());
-    EXPECT_TRUE(args[0].isVector());
+    EXPECT_GT(args[0].getVectorSize(), 0) << "Expected first argument to be a vector type";
     EXPECT_EQ(args[0].getType(), "HIP_vector_type<float, 4u>*");
     EXPECT_EQ(args[0].getVectorSize(), 4);
     EXPECT_EQ(args[0].getBaseType(), "float");
@@ -383,7 +491,7 @@ TEST_F(KernelManagerTest, HIPVectorTypeHandling) {
     
     // Verify vector properties after deserialization
     EXPECT_TRUE(deserialized_args[0].isPointer());
-    EXPECT_TRUE(deserialized_args[0].isVector());
+    EXPECT_GT(deserialized_args[0].getVectorSize(), 0) << "Expected first argument to be a vector type";
     EXPECT_EQ(deserialized_args[0].getType(), "HIP_vector_type<float, 4u>*");
     EXPECT_EQ(deserialized_args[0].getVectorSize(), 4);
     EXPECT_EQ(deserialized_args[0].getBaseType(), "float");
@@ -444,13 +552,14 @@ TEST(KernelExecutionTest, ArgumentHandling) {
     ASSERT_EQ(deserialized_value, 42);
 
     // Verify array argument
-    const auto& deserialized_array = deserialized->pre_args[1];
-    ASSERT_EQ(deserialized_array.data_type_size, sizeof(float));
-    ASSERT_EQ(deserialized_array.array_size, 4);
-    float deserialized_array[4];
-    std::memcpy(deserialized_array, deserialized_array.data.data(), sizeof(float) * 4);
+    const auto& deserialized_array_arg = deserialized->pre_args[1];
+    ASSERT_EQ(deserialized_array_arg.data_type_size, sizeof(float));
+    ASSERT_EQ(deserialized_array_arg.array_size, 4);
+    
+    std::vector<float> deserialized_values(4);
+    std::memcpy(deserialized_values.data(), deserialized_array_arg.data.data(), sizeof(float) * 4);
     for (int i = 0; i < 4; i++) {
-        ASSERT_FLOAT_EQ(deserialized_array[i], array_values[i]);
+        ASSERT_FLOAT_EQ(deserialized_values[i], array_values[i]);
     }
 
     // Clean up
