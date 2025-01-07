@@ -1,28 +1,32 @@
-# Add test executable
-add_executable(unit_tests
-  ../Tracer.cc
-  #testKernelManager.cpp 
-  #testCodeGen.cpp
-  #testComparator.cpp
-  testInterceptor.cpp
-)
+add_custom_target(tests)
 
-target_link_libraries(unit_tests
-  PRIVATE
-  hip::device
-)
+function(add_test_binary TARGET_NAME SOURCE_FILE)
+    # Create the test executable with main source file and any additional sources
+    add_executable(${TARGET_NAME} ${SOURCE_FILE} ${ARGN})
+    
+    # Link against GTest and HIP
+    target_link_libraries(${TARGET_NAME}
+        PRIVATE
+        GTest::GTest
+        GTest::Main
+        hip::device
+        HIPIntercept
+    )
 
-# Add compile definition for build directory path
-target_compile_definitions(unit_tests PRIVATE
-  CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
-)
+    # Add compile definition for build directory path
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+        CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+    )
 
-target_link_libraries(unit_tests
-  PRIVATE
-  GTest::GTest
-  GTest::Main
-  HIPIntercept
-)
+    # Register the tests
+    gtest_discover_tests(${TARGET_NAME})
+
+    # Add this test to the general tests target
+    add_dependencies(tests ${TARGET_NAME})
+endfunction()
+
+add_test_binary(testInterceptor testInterceptor.cpp)
+add_test_binary(testKernelManager testKernelManager.cpp)
 
 function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
     # Create the executable
@@ -67,12 +71,11 @@ function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
             ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace.replay
     )
 
-    add_dependencies(unit_tests run_${TARGET_NAME})
+    # Add the run target to the general tests target instead of unit_tests
+    add_dependencies(tests run_${TARGET_NAME})
 endfunction()
 
 add_hip_trace_target(test_kernels data/test_kernels.cpp)
 add_hip_trace_target(data_verification data/data_verification.cpp)
 add_hip_trace_target(vectorAdd data/vectorAdd.cpp)
 add_hip_trace_target(computeNonbondedRepro data/computeNonbondedRepro.cpp)
-
-gtest_discover_tests(unit_tests)

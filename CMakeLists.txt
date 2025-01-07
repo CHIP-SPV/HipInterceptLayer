@@ -34,7 +34,7 @@ target_link_libraries(HIPIntercept INTERFACE hip::host)
 target_link_libraries(HIPInterceptCompare INTERFACE hip::host)
 enable_testing()
 add_subdirectory(tests)
-add_dependencies(unit_tests HIPIntercept HIPInterceptCompare)
+add_dependencies(tests HIPIntercept HIPInterceptCompare)
 # Installation rules
 include(GNUInstallDirs)
 
