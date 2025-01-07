@@ -45,6 +45,40 @@ public:
     bool is_vector;
 
 private:
+    const std::unordered_map<std::string, size_t> type_sizes{
+            {"bool", sizeof(bool)},
+            {"char", sizeof(char)},
+            {"short", sizeof(short)},
+            {"int", sizeof(int)},
+            {"long", sizeof(long)},
+            {"float", sizeof(float)},
+            {"double", sizeof(double)},
+            {"size_t", sizeof(size_t)},
+            {"int8_t", sizeof(int8_t)},
+            {"uint8_t", sizeof(uint8_t)},
+            {"int16_t", sizeof(int16_t)},
+            {"uint16_t", sizeof(uint16_t)},
+            {"int32_t", sizeof(int32_t)},
+            {"uint32_t", sizeof(uint32_t)},
+            {"int64_t", sizeof(int64_t)},
+            {"uint64_t", sizeof(uint64_t)},
+            {"unsigned char", sizeof(unsigned char)},
+            {"unsigned short", sizeof(unsigned short)},
+            {"unsigned int", sizeof(unsigned int)},
+            {"unsigned long", sizeof(unsigned long)},
+            {"long long", sizeof(long long)},
+            {"unsigned long long", sizeof(unsigned long long)}
+    };
+
+    size_t getTypeSize(const std::string& type) const {
+        auto it = type_sizes.find(type);
+        if (it != type_sizes.end()) {
+            return it->second;
+        }
+        std::cerr << "Unknown type: " << type << std::endl;
+        std::abort();
+    }
+
     static std::string trim(const std::string& str) {
         size_t first = str.find_first_not_of(" \t\n\r");
         size_t last = str.find_last_not_of(" \t\n\r");
@@ -63,11 +97,39 @@ public:
         }
         this->name = name;
         this->type = type;
-        this->size = isVector() ? 16 : sizeof(void*);
         this->is_pointer = type.find("*") != std::string::npos;
-        this->is_vector = isVector();
+        this->is_vector = getVectorSize() > 0;
+        this->size = calculateSize();
         std::cout << "    Argument: " << this->type << " " << this->name 
                   << " (size: " << this->size << ")" << std::endl;
+    }
+
+    size_t calculateSize() const {
+        // Get the base type by removing pointer if present
+        std::string base_type = type;
+        bool is_ptr = base_type.find('*') != std::string::npos;
+        if (is_ptr) {
+            base_type = base_type.substr(0, base_type.find('*'));
+        }
+
+        // Handle vector types
+        size_t vec_size = getVectorSize();
+        if (vec_size > 0) {
+            // For vector types, multiply base type size by vector size
+            if (base_type.find("float") != std::string::npos || base_type.find("int") != std::string::npos || 
+                base_type.find("uint") != std::string::npos) {
+                return vec_size * 4;  // 4 bytes per element
+            }
+            if (base_type.find("double") != std::string::npos) {
+                return vec_size * 8;  // 8 bytes per element
+            }
+        }
+
+        // Trim and normalize the base type
+        base_type = trim(base_type);
+        
+        // Look up the type size in our map
+        return getTypeSize(base_type);
     }
 
     bool isPointer() const {
@@ -82,7 +144,34 @@ public:
         return name;
     }
 
-    bool isVector() const {
+    size_t getVectorSize() const {
+        // Handle HIP vector types
+        if (type.find("HIP_vector_type") != std::string::npos) {
+            size_t template_start = type.find('<');
+            size_t template_end = type.find_last_of('>');
+            if (template_start != std::string::npos && template_end != std::string::npos) {
+                std::string template_params = type.substr(template_start + 1, template_end - template_start - 1);
+                // Extract the vector size (second template parameter)
+                size_t comma_pos = template_params.find(',');
+                if (comma_pos != std::string::npos) {
+                    std::string size_str = trim(template_params.substr(comma_pos + 1));
+                    try {
+                        return std::stoul(size_str);
+                    } catch (...) {
+                        return 0;
+                    }
+                }
+            }
+            return 0;
+        }
+
+        // Handle standard vector types (float2, float3, float4, etc.)
+        std::string base = type;
+        size_t ptr_pos = base.find('*');
+        if (ptr_pos != std::string::npos) {
+            base = base.substr(0, ptr_pos);
+        }
+
         static const std::vector<std::string> vector_types = {
             "float4", "float3", "float2",
             "int4", "int3", "int2",
@@ -91,16 +180,67 @@ public:
             "long4", "long3", "long2",
             "ulong4", "ulong3", "ulong2",
             "char4", "char3", "char2",
-            "uchar4", "uchar3", "uchar2",
-            "HIP_vector_type"
+            "uchar4", "uchar3", "uchar2"
         };
-        
+
         for (const auto& vtype : vector_types) {
-            if (type.find(vtype) != std::string::npos) {
-                return true;
+            if (base.find(vtype) != std::string::npos) {
+                char suffix = vtype.back();
+                return suffix - '0';
             }
         }
-        return false;
+
+        return 0;  // Not a vector type
+    }
+
+    void printValue(std::ostream& os, const void* param_value) const {
+        if (!param_value) {
+            os << "null";
+            return;
+        }
+
+        std::string base = getBaseType();
+        size_t vec_size = getVectorSize();
+        
+        if (vec_size > 0) {
+            // Handle vector types
+            if (base.find("float") != std::string::npos) {
+                const float* values = (const float*)param_value;
+                os << "(";
+                for (size_t i = 0; i < vec_size; i++) {
+                    if (i > 0) os << ", ";
+                    os << values[i];
+                }
+                os << ")";
+            } else if (base.find("int") != std::string::npos) {
+                const int* values = (const int*)param_value;
+                os << "(";
+                for (size_t i = 0; i < vec_size; i++) {
+                    if (i > 0) os << ", ";
+                    os << values[i];
+                }
+                os << ")";
+            } else {
+                os << "vector of unknown type " << base;
+            }
+        } else {
+            // Handle scalar types
+            if (base == "int") {
+                os << *(const int*)param_value;
+            } else if (base == "unsigned int") {
+                os << *(const unsigned int*)param_value;
+            } else if (base == "float") {
+                os << *(const float*)param_value;
+            } else if (base == "double") {
+                os << *(const double*)param_value;
+            } else if (base == "bool") {
+                os << (*(const bool*)param_value ? "true" : "false");
+            } else if (base == "size_t") {
+                os << *(const size_t*)param_value;
+            } else {
+                os << "value of unknown type " << base << " at " << param_value;
+            }
+        }
     }
 
     std::string getType() const {
@@ -163,27 +303,6 @@ public:
         return base;
     }
 
-    size_t getVectorSize() const {
-        // Check for vector types (float2, float3, float4, etc.)
-        std::string base = type;
-        
-        // Remove pointer if present
-        size_t ptr_pos = base.find('*');
-        if (ptr_pos != std::string::npos) {
-            base = base.substr(0, ptr_pos);
-        }
-        
-        // Look for vector suffix
-        static const std::vector<std::string> vector_suffixes = {"2", "3", "4"};
-        for (const auto& suffix : vector_suffixes) {
-            if (base.find(suffix) != std::string::npos) {
-                return std::stoi(suffix);
-            }
-        }
-        
-        return 1; // Not a vector type
-    }
-
     void serialize(std::ofstream& file) const {
         // std::cout << "[DEBUG] Serializing argument: " << name << " (" << type << ")" << std::endl;
         // Write the argument name
@@ -202,71 +321,28 @@ public:
         file.write(reinterpret_cast<const char*>(&is_vector), sizeof(bool));
     }
 
-    void deserialize(std::ifstream& file) {
-        // std::cout << "[DEBUG] Deserializing argument" << std::endl;
+    static Argument deserialize(std::ifstream& file) {
         // Read the argument name
         uint32_t name_length;
         file.read(reinterpret_cast<char*>(&name_length), sizeof(uint32_t));
-        name.resize(name_length);
+        std::string name(name_length, '\0');
         file.read(&name[0], name_length);
         
         // Read the type
         uint32_t type_length;
         file.read(reinterpret_cast<char*>(&type_length), sizeof(uint32_t));
-        type.resize(type_length);
+        std::string type(type_length, '\0');
         file.read(&type[0], type_length);
         
+        // Create argument with actual name and type
+        Argument arg(name, type);
+        
         // Read other properties
-        file.read(reinterpret_cast<char*>(&size), sizeof(size_t));
-        file.read(reinterpret_cast<char*>(&is_pointer), sizeof(bool));
-        file.read(reinterpret_cast<char*>(&is_vector), sizeof(bool));
-        // std::cout << "[DEBUG] Deserialized argument: " << name << " (" << type << ")" << std::endl;
-    }
-
-    void printValue(std::ostream& os, const void* param_value) const {
-        if (!param_value) {
-            os << "null";
-            return;
-        }
-
-        std::string base = getBaseType();
-        if (base == "int") {
-            os << *(const int*)param_value;
-        } else if (base == "unsigned int") {
-            os << *(const unsigned int*)param_value;
-        } else if (base == "float") {
-            os << *(const float*)param_value;
-        } else if (base == "double") {
-            os << *(const double*)param_value;
-        } else if (base == "bool") {
-            os << (*(const bool*)param_value ? "true" : "false");
-        } else if (base == "size_t") {
-            os << *(const size_t*)param_value;
-        } else if (isVector()) {
-            // Handle vector types (float4, int2, etc.)
-            size_t vec_size = getVectorSize();
-            if (base.find("float") != std::string::npos) {
-                const float* values = (const float*)param_value;
-                os << "(";
-                for (size_t i = 0; i < vec_size; i++) {
-                    if (i > 0) os << ", ";
-                    os << values[i];
-                }
-                os << ")";
-            } else if (base.find("int") != std::string::npos) {
-                const int* values = (const int*)param_value;
-                os << "(";
-                for (size_t i = 0; i < vec_size; i++) {
-                    if (i > 0) os << ", ";
-                    os << values[i];
-                }
-                os << ")";
-            } else {
-                os << "vector of unknown type " << base;
-            }
-        } else {
-            os << "value of unknown type " << base << " at " << param_value;
-        }
+        file.read(reinterpret_cast<char*>(&arg.size), sizeof(size_t));
+        file.read(reinterpret_cast<char*>(&arg.is_pointer), sizeof(bool));
+        file.read(reinterpret_cast<char*>(&arg.is_vector), sizeof(bool));
+        
+        return arg;
     }
 };
 
@@ -580,10 +656,8 @@ public:
         kernel.arguments.reserve(num_args);
         
         for (uint32_t i = 0; i < num_args; i++) {
-            // Create a temporary argument with placeholder values
-            Argument arg("", "");
             // Deserialize into the temporary argument
-            arg.deserialize(file);
+            Argument arg = Argument::deserialize(file);
             // Add the deserialized argument to the kernel
             kernel.arguments.push_back(std::move(arg));
         }
