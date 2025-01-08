@@ -37,7 +37,7 @@ namespace {
         for (size_t i = 0; i < kernel.pre_args.size(); i++) {
             const auto& value = kernel.pre_args[i];
             const auto& arg = arguments[i];
-            std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+            std::cout << "  Arg " << i << " (" << arg.getType() << "): size=" << value.total_size() << " ";
             if (arg.isPointer()) {
                 // For array arguments, print the checksum
                 float checksum = calculateChecksum(value.data.data(), value.total_size());
@@ -53,7 +53,7 @@ namespace {
         for (size_t i = 0; i < kernel.post_args.size(); i++) {
             const auto& value = kernel.post_args[i];
             const auto& arg = arguments[i];
-            std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
+            std::cout << "  Arg " << i << " (" << arg.getType() << "): size=" << value.total_size() << " ";
             if (arg.isPointer()) {
                 // For array arguments, print the checksum
                 float checksum = calculateChecksum(value.data.data(), value.total_size());
