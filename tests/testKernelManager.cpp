@@ -588,7 +588,13 @@ TEST_F(KernelManagerTest, CompoundTypesParsing) {
             uint16_t uint16_val,
             int16_t int16_val,
             uint8_t uint8_val,
-            int8_t int8_val
+            int8_t int8_val,
+            unsigned int,
+            __restrict__ unsigned int*,
+            __restrict__ unsigned int* test_ptr,
+            float4* in_scalar_float4,
+            char2,
+            HIP_vector_type<float, 4>
         ) {}
     )";
 
@@ -652,5 +658,49 @@ TEST_F(KernelManagerTest, CompoundTypesParsing) {
 
     EXPECT_EQ(args[16].getType(), "int8_t");
     EXPECT_EQ(args[16].getName(), "int8_val");
+
+    EXPECT_EQ(args[17].getType(), "unsigned int");
+    EXPECT_EQ(args[17].getName(), "arg17");
+
+    EXPECT_EQ(args[18].getType(), "__restrict__ unsigned int*"); 
+    EXPECT_EQ(args[18].getName(), "arg18");
+
+    EXPECT_EQ(args[19].getType(), "__restrict__ unsigned int*");
+    EXPECT_EQ(args[19].getName(), "test_ptr");
+
+    EXPECT_EQ(args[20].getType(), "float4*");
+    EXPECT_EQ(args[20].getName(), "in_scalar_float4");
+
+    EXPECT_EQ(args[21].getType(), "char2");
+    EXPECT_EQ(args[21].getName(), "arg21");
+}
+
+TEST_F(KernelManagerTest, QuickTest) {
+        const std::string test_source = R"(
+        __global__ void compoundTypesKernel(
+            unsigned int value,
+            unsigned long long counter,
+            unsigned int *ptr,
+            unsigned int unnamed,
+            int x,
+            float *fptr,
+            HIP_vector_type<float, 4> vec,
+            unsigned short ushort_val,
+            unsigned char uchar_val,
+            uint64_t uint64_val,
+            int64_t int64_val,
+            uint32_t uint32_val,
+            int32_t int32_val,
+            uint16_t uint16_val,
+            int16_t int16_val,
+            uint8_t uint8_val,
+            int8_t int8_val,
+            unsigned int,
+            __restrict__ unsigned int*,
+            __restrict__ unsigned int* test_ptr,
+            float4* in_scalar_float4,
+            char2
+        ) {}
+    )";
 }
 

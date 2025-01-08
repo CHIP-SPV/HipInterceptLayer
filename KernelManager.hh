@@ -36,6 +36,121 @@ inline std::string demangle(const std::string& mangled_name) {
     return result;
 }
 
+static std::vector<std::string> known_keywords = {
+    "bool",    "char",     "short",   "int",      "long",      "float",
+    "double",  "size_t",   "int8_t",  "uint8_t",  "int16_t",   "uint16_t", 
+    "int32_t", "uint32_t", "int64_t", "uint64_t", "long long", "float2",
+    "float3",  "float4",   "double2", "double3",  "double4",   "char2", 
+    "char3",   "char4",    "uchar2",  "uchar3",   "uchar4",    "short2",
+    "short3",  "short4",   "ushort2", "ushort3",  "ushort4",   "int2",
+    "int3",    "int4",     "uint2",   "uint3",    "uint4",     "long2",
+    "long3",   "long4",    "ulong2",  "ulong3",   "ulong4"
+};
+
+static bool isKeyword(const std::string& str) {
+    return std::find(known_keywords.begin(), known_keywords.end(), str) != known_keywords.end();
+}
+
+static bool isLastTokenKnownKeyword(const std::string& str) {
+    // Find the last space that's not inside template brackets
+    int template_depth = 0;
+    size_t last_space = std::string::npos;
+    
+    for (size_t i = 0; i < str.length(); i++) {
+        if (str[i] == '<') template_depth++;
+        else if (str[i] == '>') template_depth--;
+        else if (str[i] == ' ' && template_depth == 0) last_space = i;
+    }
+
+    std::string last_token;
+    if (last_space != std::string::npos) {
+        last_token = str.substr(last_space + 1);
+    } else {
+        last_token = str;
+    }
+
+    // Remove any trailing pointer asterisks
+    last_token.erase(std::remove(last_token.begin(), last_token.end(), '*'), last_token.end());
+
+    auto is_keyword = isKeyword(last_token);
+    auto is_vector = last_token.find("HIP_vector_type") != std::string::npos;
+    return is_keyword || is_vector;
+}
+
+static std::string trimWhiteSpaces(const std::string& str) {
+    std::string result = str;
+    
+    // Remove leading whitespace
+    result.erase(0, result.find_first_not_of(" \t\n\r\f\v"));
+    
+    // Remove trailing whitespace
+    result.erase(result.find_last_not_of(" \t\n\r\f\v") + 1);
+    
+    // Replace multiple spaces with single space
+    result = std::regex_replace(result, std::regex("\\s+"), " ");
+    
+    return result;
+}
+
+static std::vector<std::string> splitArgs(const std::string& source) {
+    std::vector<std::string> result;
+    std::string current;
+    int angle_bracket_count = 0;
+    
+    // Iterate through each character
+    for (char c : source) {
+        if (c == '<') {
+            angle_bracket_count++;
+            current += c;
+        } else if (c == '>') {
+            angle_bracket_count--;
+            current += c;
+        } else if (c == ',' && angle_bracket_count == 0) {
+            // Only split on comma if we're not inside angle brackets
+            if (!current.empty()) {
+                result.push_back(current);
+                current.clear();
+            }
+        } else {
+            current += c;
+        }
+    }
+    
+    // Don't forget the last argument
+    if (!current.empty()) {
+        result.push_back(current);
+    }
+    
+    // Trim each argument
+    for (auto& arg : result) {
+        arg = trimWhiteSpaces(arg);
+    }
+    
+    std::cout << "splitArgs completed. Found " << result.size() << " arguments." << std::endl;
+    return result;
+}
+
+static std::pair<std::string, std::string> processArgWithRename(const std::string& arg, int idx) {
+    std::string type, name;
+    std::string newName("arg" + std::to_string(idx));
+    std::string arg_copy = arg;
+
+    if (isLastTokenKnownKeyword(arg)) {
+        arg_copy = arg_copy + " " + newName;
+    }
+
+    type = arg_copy.substr(0, arg_copy.find_last_of(' '));
+    name = arg_copy.substr(arg_copy.find_last_of(' ') + 1);
+
+    // if name starts with *, move it to the end of the type
+    if (name[0] == '*') {
+        type = type + "*";
+        name = name.substr(1);
+    }
+
+    return std::make_pair(type, name);
+}
+
 class Argument {
 public:
     std::string name;
@@ -67,7 +182,10 @@ private:
             {"unsigned int", sizeof(unsigned int)},
             {"unsigned long", sizeof(unsigned long)},
             {"long long", sizeof(long long)},
-            {"unsigned long long", sizeof(unsigned long long)}
+            {"unsigned long long", sizeof(unsigned long long)},
+            {"char2", 2 * sizeof(char)},
+            {"uchar2", 2 * sizeof(unsigned char)},
+            {"float4", 4 * sizeof(float)}
     };
 
     size_t getTypeSize(const std::string& type) const {
@@ -76,7 +194,7 @@ private:
             return it->second;
         }
         std::cerr << "Unknown type: " << type << std::endl;
-        std::abort();
+        return 1;
     }
 
     static std::string trim(const std::string& str) {
@@ -499,7 +617,6 @@ public:
     Kernel() {}
 
     std::pair<std::string, std::vector<Argument>> getKernelInfo(std::string signature) const {
-        std::vector<Argument> args;
         std::string kernel_name;
         // Extract kernel name from device stub
         size_t stub_pos = signature.find("__device_stub__");
@@ -527,43 +644,16 @@ public:
         // Extract arguments string (everything between parentheses)
         size_t args_start = signature.find('(');
         size_t args_end = signature.find_last_of(')');
-        if (args_start != std::string::npos && args_end != std::string::npos) {
-            std::string args_str = signature.substr(args_start + 1, args_end - args_start - 1);
-            
-            // Parse arguments considering template parameters
-            size_t pos = 0;
-            int template_depth = 0;
-            std::string current_arg;
-            
-            for (size_t i = 0; i < args_str.length(); i++) {
-                char c = args_str[i];
-                
-                if (c == '<') {
-                    template_depth++;
-                    current_arg += c;
-                } else if (c == '>') {
-                    template_depth--;
-                    current_arg += c;
-                } else if (c == ',' && template_depth == 0) {
-                    // Process complete argument
-                    if (!current_arg.empty()) {
-                        current_arg = trim(current_arg);
-                        processArgument(current_arg, args);
-                        current_arg.clear();
-                    }
-                } else {
-                    current_arg += c;
-                }
-            }
-            
-            // Process the last argument
-            if (!current_arg.empty()) {
-                current_arg = trim(current_arg);
-                processArgument(current_arg, args);
-            }
+        assert(args_start != std::string::npos && args_end != std::string::npos);
+        std::string args_str = signature.substr(args_start + 1, args_end - args_start - 1);
+        auto argsStrVec = splitArgs(args_str);
+        std::vector<Argument> processedArgs;
+        for (size_t i = 0; i < argsStrVec.size(); ++i) {
+            auto new_arg = processArgWithRename(argsStrVec[i], i);
+            processedArgs.push_back(Argument(new_arg.second, new_arg.first));
         }
 
-        return {kernel_name, args};
+        return {kernel_name, processedArgs};
     }
 
     Kernel(std::string signature) {
@@ -665,36 +755,6 @@ public:
         // std::cout << "[DEBUG] Finished deserializing kernel: " << kernel.name << std::endl;
         return kernel;
     }
-
-    void processArgument(const std::string& arg, std::vector<Argument>& args) const {
-        // Find the last space that's not inside template brackets
-        int template_depth = 0;
-        size_t last_space = std::string::npos;
-        
-        for (size_t i = 0; i < arg.length(); i++) {
-            if (arg[i] == '<') template_depth++;
-            else if (arg[i] == '>') template_depth--;
-            else if (arg[i] == ' ' && template_depth == 0) last_space = i;
-        }
-
-        std::string type, name;
-        if (last_space != std::string::npos) {
-            type = trim(arg.substr(0, last_space));
-            name = trim(arg.substr(last_space + 1));
-        } else {
-            type = arg;
-            name = "arg" + std::to_string(args.size() + 1);
-        }
-
-        // Handle pointer types
-        if (name.find('*') != std::string::npos) {
-            type += '*';
-            name.erase(std::remove(name.begin(), name.end(), '*'), name.end());
-        }
-
-        args.emplace_back(name, type);
-    }
-
 };
 
 class KernelManager {
