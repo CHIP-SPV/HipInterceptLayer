@@ -177,24 +177,31 @@ private:
             {"uint32_t", sizeof(uint32_t)},
             {"int64_t", sizeof(int64_t)},
             {"uint64_t", sizeof(uint64_t)},
-            {"unsigned char", sizeof(unsigned char)},
-            {"unsigned short", sizeof(unsigned short)},
-            {"unsigned int", sizeof(unsigned int)},
-            {"unsigned long", sizeof(unsigned long)},
             {"long long", sizeof(long long)},
-            {"unsigned long long", sizeof(unsigned long long)},
             {"char2", 2 * sizeof(char)},
             {"uchar2", 2 * sizeof(unsigned char)},
             {"float4", 4 * sizeof(float)}
     };
 
     size_t parseTypeToInt(const std::string& type) const {
-        auto it = type_sizes.find(type);
-        if (it != type_sizes.end()) {
-            return it->second;
+        size_t longest_match = 0;
+        size_t size = 1;
+        
+        for (const auto& type_size : type_sizes) {
+            if (type.find(type_size.first) != std::string::npos) {
+                if (type_size.first.length() > longest_match) {
+                    longest_match = type_size.first.length();
+                    size = type_size.second;
+                }
+            }
         }
-        std::cerr << "Unknown type: " << type << std::endl;
-        return 1;
+
+        if (longest_match == 0) {
+            std::cerr << "Unknown type: " << type << std::endl;
+            std::abort();
+        }
+        
+        return size;
     }
 
     static std::string trim(const std::string& str) {
