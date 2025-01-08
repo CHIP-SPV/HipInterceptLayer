@@ -398,7 +398,6 @@ std::string preprocess_source(const std::string &source, int numHeaders,
   std::ofstream source_file(source_path);
   if (!source_file) {
     std::cerr << "Failed to create source file" << std::endl;
-    std::filesystem::remove_all(temp_dir); // Clean up before returning
     return source;
   }
   source_file << source;
@@ -424,7 +423,6 @@ std::string preprocess_source(const std::string &source, int numHeaders,
   int result = system(cmd.str().c_str());
   if (result != 0) {
     std::cerr << "Preprocessing failed with code " << result << std::endl;
-    std::filesystem::remove_all(temp_dir); // Clean up before returning
     return source;
   }
 
@@ -432,7 +430,6 @@ std::string preprocess_source(const std::string &source, int numHeaders,
   std::ifstream preprocessed_file(output_path);
   if (!preprocessed_file) {
     std::cerr << "Failed to read preprocessed file" << std::endl;
-    std::filesystem::remove_all(temp_dir); // Clean up before returning
     return source;
   }
 
@@ -440,9 +437,7 @@ std::string preprocess_source(const std::string &source, int numHeaders,
   buffer << preprocessed_file.rdbuf();
   std::string preprocessed = buffer.str();
 
-  // Clean up temporary files
-  std::filesystem::remove_all(temp_dir);
-
+  std::cout << "Temporary files are stored in: " << temp_dir << std::endl;
   return preprocessed;
 }
 
