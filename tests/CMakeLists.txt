@@ -64,7 +64,7 @@ function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
         COMMENT "Running ${TARGET_NAME} with HIPIntercept preloaded and replaying trace"
     )
 
-    add_custom_target(run_${TARGET_NAME}
+    add_custom_target(run_${TARGET_NAME} ALL
         DEPENDS 
             ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.trace
             ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-0.log
