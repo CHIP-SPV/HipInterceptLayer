@@ -188,7 +188,7 @@ private:
             {"float4", 4 * sizeof(float)}
     };
 
-    size_t getTypeSize(const std::string& type) const {
+    size_t parseTypeToInt(const std::string& type) const {
         auto it = type_sizes.find(type);
         if (it != type_sizes.end()) {
             return it->second;
@@ -217,12 +217,12 @@ public:
         this->type = type;
         this->is_pointer = type.find("*") != std::string::npos;
         this->is_vector = getVectorSize() > 0;
-        this->size = calculateSize();
+        this->size = getTypeSize();
         std::cout << "    Argument: " << this->type << " " << this->name 
                   << " (size: " << this->size << ")" << std::endl;
     }
 
-    size_t calculateSize() const {
+    size_t getTypeSize() const {
         // Get the base type by removing pointer if present
         std::string base_type = type;
         bool is_ptr = base_type.find('*') != std::string::npos;
@@ -247,7 +247,7 @@ public:
         base_type = trim(base_type);
         
         // Look up the type size in our map
-        return getTypeSize(base_type);
+        return parseTypeToInt(base_type);
     }
 
     bool isPointer() const {

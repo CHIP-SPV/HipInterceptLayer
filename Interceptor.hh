@@ -104,28 +104,17 @@ void capturePreState(KernelExecution& exec, const Kernel& kernel, void** args) {
                 
                 // Print pre-execution info and capture state
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                ArgState arg_state;
-                arg_state.captureGpuMemory(device_ptr, info->size);
+                ArgState arg_state(arg.getTypeSize(), info->size);
+                arg_state.captureGpuMemory(device_ptr, info->size, arg.getTypeSize());
                 exec.pre_args.push_back(std::move(arg_state));
             }
         } else {
             // For non-pointer types, capture the value
             std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
             
-            // Get the size based on the argument type
-            size_t value_size = arg.getSize();
-            if (value_size == 0) {
-                std::cerr << "Error: Unknown type size for argument " << i << " type: " << arg.getType() << std::endl;
-                std::abort();
-            }
-            
-            // Store the scalar value
-            std::vector<char> value_data(value_size);
-            std::memcpy(value_data.data(), param_value, value_size);
-            
             // Create ArgState for the scalar value
-            ArgState arg_state(value_size, 1);
-            std::memcpy(arg_state.data.data(), value_data.data(), value_size);
+            ArgState arg_state(arg.getTypeSize(), 1);
+            arg_state.captureHostMemory(param_value, arg.getTypeSize(), arg.getTypeSize());
             exec.pre_args.push_back(std::move(arg_state));
             
             // Print the value using the Argument's printValue method
@@ -148,15 +137,14 @@ void capturePostState(KernelExecution& exec, const Kernel& kernel, void** args) 
             auto [base_ptr, info] = Interceptor::instance().findContainingAllocation(device_ptr);
             if (base_ptr && info) {
                 std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
-                ArgState arg_state;
-                arg_state.captureGpuMemory(device_ptr, info->size);
+                ArgState arg_state(arg.getTypeSize(), info->size);
+                arg_state.captureGpuMemory(device_ptr, info->size, arg.getTypeSize());
                 exec.post_args.push_back(std::move(arg_state));
             }
         } else {
             // For scalar values, capture the final state
-            size_t value_size = arg.getSize();
-            ArgState arg_state(value_size, 1);
-            std::memcpy(arg_state.data.data(), param_value, value_size);
+            ArgState arg_state(arg.getTypeSize(), arg.getTypeSize());
+            arg_state.captureHostMemory(param_value, arg.getTypeSize(), arg.getTypeSize());
             exec.post_args.push_back(std::move(arg_state));
             std::cout << "  Arg " << i << " (" << arg.getType() << "): ";
             arg.printValue(std::cout, param_value);

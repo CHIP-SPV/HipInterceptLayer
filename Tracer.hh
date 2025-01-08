@@ -52,7 +52,7 @@ class ArgState {
 
     size_t total_size() const { return data_type_size * array_size; }
 
-    void captureGpuMemory(void* ptr, size_t capture_size) {
+    void captureGpuMemory(void* ptr, size_t capture_size, size_t element_size) {
         if (!ptr || capture_size == 0) return;
         
         // Ensure GPU operations are complete
@@ -64,8 +64,8 @@ class ArgState {
         }
         
         // Resize the data vector to accommodate the captured memory
-        data_type_size = sizeof(char);
-        array_size = capture_size;
+        data_type_size = element_size;
+        array_size = capture_size / element_size;
         data.resize(capture_size);
         
         // Get the real hipMemcpy function
@@ -86,16 +86,16 @@ class ArgState {
 
         // Calculate and print hash
         float checksum = calculateChecksum(data.data(), capture_size);
-        std::cout << "Captured GPU memory at " << ptr << " size: " << capture_size 
+        std::cout << "Captured GPU memory at " << ptr << " size: " << capture_size << " total_size: " << total_size()
                   << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
     }
 
-    void captureHostMemory(void* ptr, size_t capture_size) {
+    void captureHostMemory(void* ptr, size_t capture_size, size_t element_size) {
         if (!ptr || capture_size == 0) return;
         
         // Resize the data vector to accommodate the captured memory
-        data_type_size = sizeof(char);
-        array_size = capture_size;
+        data_type_size = element_size;
+        array_size = capture_size / element_size;
         data.resize(capture_size);
         
         // Copy the host memory directly
@@ -103,7 +103,7 @@ class ArgState {
 
         // Calculate and print hash
         float checksum = calculateChecksum(data.data(), capture_size);
-        std::cout << "Captured Host memory at " << ptr << " size: " << capture_size 
+        std::cout << "Captured Host memory at " << ptr << " size: " << capture_size << " total_size: " << total_size()
                   << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
     }
 

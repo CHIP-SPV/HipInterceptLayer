@@ -190,11 +190,11 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes,
         // Capture source memory state
         if (kind == hipMemcpyHostToDevice) {
             ArgState arg;
-            arg.captureHostMemory(const_cast<void*>(src), sizeBytes);
+            arg.captureHostMemory(const_cast<void*>(src), sizeBytes, sizeof(char));
             op.pre_args.push_back(std::move(arg));
         } else {
             ArgState arg;
-            arg.captureGpuMemory(const_cast<void*>(src), sizeBytes);
+            arg.captureGpuMemory(const_cast<void*>(src), sizeBytes, sizeof(char));
             op.pre_args.push_back(std::move(arg));
         }
 
@@ -207,11 +207,11 @@ static hipError_t hipMemcpy_impl(void *dst, const void *src, size_t sizeBytes,
         // Capture destination memory state
         if (kind == hipMemcpyHostToDevice) {
             ArgState arg;
-            arg.captureGpuMemory(dst, sizeBytes);
+            arg.captureGpuMemory(dst, sizeBytes, sizeof(char));
             op.post_args.push_back(std::move(arg));
         } else {
             ArgState arg;
-            arg.captureHostMemory(dst, sizeBytes);
+            arg.captureHostMemory(dst, sizeBytes, sizeof(char));
             op.post_args.push_back(std::move(arg));
         }
     }
@@ -234,7 +234,7 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
 
     // For hipMemset
     ArgState pre_arg;
-    pre_arg.captureGpuMemory(dst, sizeBytes);
+    pre_arg.captureGpuMemory(dst, sizeBytes, sizeof(char));
     op.pre_args.push_back(std::move(pre_arg));
 
     // Execute the real hipMemset
@@ -244,7 +244,7 @@ static hipError_t hipMemset_impl(void *dst, int value, size_t sizeBytes) {
     }
 
     ArgState post_arg;
-    post_arg.captureGpuMemory(dst, sizeBytes);
+    post_arg.captureGpuMemory(dst, sizeBytes, sizeof(char));
     op.post_args.push_back(std::move(post_arg));
 
     // Record operation using Tracer
@@ -634,11 +634,11 @@ hipError_t hipMemcpyAsync(void *dst, const void *src, size_t sizeBytes,
         // Capture source memory state
         if (kind == hipMemcpyHostToDevice) {
             ArgState arg;
-            arg.captureHostMemory(const_cast<void*>(src), sizeBytes);
+            arg.captureHostMemory(const_cast<void*>(src), sizeBytes, sizeof(char));
             op.pre_args.push_back(std::move(arg));
         } else {
             ArgState arg;
-            arg.captureGpuMemory(const_cast<void*>(src), sizeBytes);
+            arg.captureGpuMemory(const_cast<void*>(src), sizeBytes, sizeof(char));
             op.pre_args.push_back(std::move(arg));
         }
 
@@ -654,11 +654,11 @@ hipError_t hipMemcpyAsync(void *dst, const void *src, size_t sizeBytes,
         // Capture destination memory state
         if (kind == hipMemcpyHostToDevice) {
             ArgState arg;
-            arg.captureGpuMemory(dst, sizeBytes);
+            arg.captureGpuMemory(dst, sizeBytes, sizeof(char));
             op.post_args.push_back(std::move(arg));
         } else {
             ArgState arg;
-            arg.captureHostMemory(dst, sizeBytes);
+            arg.captureHostMemory(dst, sizeBytes, sizeof(char));
             op.post_args.push_back(std::move(arg));
         }
     }
