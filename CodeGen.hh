@@ -1,6 +1,7 @@
 #ifndef HIP_INTERCEPT_LAYER_CODE_GEN_HH
 #define HIP_INTERCEPT_LAYER_CODE_GEN_HH
 
+#include "config.hh"
 #include "KernelManager.hh"
 #include "Tracer.hh"
 #include <chrono>
@@ -182,8 +183,13 @@ private:
     }
 
     // Copy the contents of CodeGenKernelHeaders.hh into the code
-    std::ifstream headers_file("CodeGenKernelHeaders.hh");
+    std::ifstream headers_file(KERNEL_HEADERS_PATH);
+    if (!headers_file.is_open()) {
+        throw std::runtime_error("Failed to open CodeGenKernelHeaders.hh at path: " KERNEL_HEADERS_PATH);
+    }
     ss << headers_file.rdbuf();
+    ss << "\n\n";
+    headers_file.close();
 
     ss << "int main() {\n"
        << "    hipError_t err;\n"

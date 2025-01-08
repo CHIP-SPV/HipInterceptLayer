@@ -1,0 +1,14 @@
+#ifndef HIP_INTERCEPT_LAYER_CONFIG_HH
+#define HIP_INTERCEPT_LAYER_CONFIG_HH
+
+#define HIPCC_PATH "@CMAKE_CXX_COMPILER@"
+
+// During build, use source directory path
+#ifdef BUILD_TIME
+#define KERNEL_HEADERS_PATH "@CMAKE_CURRENT_SOURCE_DIR@/CodeGenKernelHeaders.hh"
+#else
+// After install, use install directory path
+#define KERNEL_HEADERS_PATH "@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_INCLUDEDIR@/hip-intercept/CodeGenKernelHeaders.hh"
+#endif
+
+#endif // HIP_INTERCEPT_LAYER_CONFIG_HH 

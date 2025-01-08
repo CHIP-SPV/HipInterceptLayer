@@ -12,7 +12,12 @@ elseif(NOT CMAKE_CXX_COMPILER MATCHES ".*hipcc$")
   message(FATAL_ERROR "HIP Intercept Layer requires hipcc compiler. Current compiler: ${CMAKE_CXX_COMPILER}")
 endif()
 
-add_definitions(-DHIPCC_PATH="${CMAKE_CXX_COMPILER}")
+# Configure header file
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/config.hh.in
+  ${CMAKE_CURRENT_BINARY_DIR}/config.hh
+  @ONLY
+)
 
 add_compile_options(-g)
 
@@ -26,6 +31,10 @@ message(STATUS "HIP_INCLUDE_DIRS: ${HIP_INCLUDE_DIRS}")
 
 include_directories(${HIP_INCLUDE_DIRS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_BINARY_DIR})  # For config.hh
+
+# Define BUILD_TIME for build-time path resolution
+add_compile_definitions(BUILD_TIME)
 
 # Build libraries and executable
 add_library(HIPIntercept SHARED Interceptor.cc Tracer.cc)
@@ -35,6 +44,7 @@ target_link_libraries(HIPInterceptCompare INTERFACE hip::host)
 enable_testing()
 add_subdirectory(tests)
 add_dependencies(tests HIPIntercept HIPInterceptCompare)
+
 # Installation rules
 include(GNUInstallDirs)
 
@@ -49,5 +59,7 @@ install(FILES
     Util.hh
     Tracer.hh
     Comparator.hh
+    CodeGenKernelHeaders.hh
+    ${CMAKE_CURRENT_BINARY_DIR}/config.hh
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hip-intercept
 )
