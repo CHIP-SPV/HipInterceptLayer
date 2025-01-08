@@ -50,8 +50,7 @@ TEST(ComparatorTest, CompareKernelExecutions) {
         nullptr
     );
 
-    Comparator comparator;
-    ASSERT_TRUE(comparator.compare(k1, k2));
+    ASSERT_TRUE(Comparator::compare(k1, k2));
 }
 
 TEST(ComparatorTest, CompareKernelExecutionsDifferentArgs) {
@@ -94,8 +93,7 @@ TEST(ComparatorTest, CompareKernelExecutionsDifferentArgs) {
         nullptr
     );
 
-    Comparator comparator;
-    ASSERT_FALSE(comparator.compare(k1, k2));
+    ASSERT_FALSE(Comparator::compare(k1, k2));
 }
 
 TEST(ComparatorTest, CompareMemoryOperations) {
@@ -140,8 +138,7 @@ TEST(ComparatorTest, CompareMemoryOperations) {
         nullptr
     );
 
-    Comparator comparator;
-    ASSERT_TRUE(comparator.compare(m1, m2));
+    ASSERT_TRUE(Comparator::compare(m1, m2));
 }
 
 TEST(ComparatorTest, CompareMemoryOperationsDifferentData) {
@@ -186,6 +183,5 @@ TEST(ComparatorTest, CompareMemoryOperationsDifferentData) {
         nullptr
     );
 
-    Comparator comparator;
-    ASSERT_FALSE(comparator.compare(m1, m2));
+    ASSERT_FALSE(Comparator::compare(m1, m2));
 }

@@ -64,13 +64,7 @@ namespace {
             }
             std::cout << "\n";
         }
-
     }
-}
-
-std::ostream& operator<<(std::ostream& os, const Comparator& comp) {
-    os << "Comparator comparing files: " << comp.file1 << " and " << comp.file2;
-    return os;
 }
 
 int main(int argc, char* argv[]) {
@@ -116,8 +110,30 @@ int main(int argc, char* argv[]) {
         }
     }
     else if (argc == 3) {
-        Comparator comparator(argv[1], argv[2]);
-        std::cout << comparator;
+        Tracer tracer1(argv[1]);
+        Tracer tracer2(argv[2]);
+        tracer1.setSerializeTrace(false);
+        tracer2.setSerializeTrace(false);
+        
+        if (tracer1.trace_.operations.size() != tracer2.trace_.operations.size()) {
+            std::cerr << "Number of operations does not match: " 
+                      << tracer1.trace_.operations.size() << " vs " 
+                      << tracer2.trace_.operations.size() << std::endl;
+            return 1;
+        }
+
+        bool all_match = true;
+        for (size_t i = 0; i < tracer1.trace_.operations.size(); i++) {
+            const auto& op1 = tracer1.trace_.operations[i];
+            const auto& op2 = tracer2.trace_.operations[i];
+            
+            if (!Comparator::compare(*op1, *op2)) {
+                std::cerr << "Operation " << i << " does not match" << std::endl;
+                all_match = false;
+            }
+        }
+        
+        return all_match ? 0 : 1;
     }
     
     return 0;
