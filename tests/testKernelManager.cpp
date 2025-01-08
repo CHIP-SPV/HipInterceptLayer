@@ -192,40 +192,40 @@ TEST_F(KernelManagerTest, TraceFileTest) {
   Kernel vector = traced_manager.getKernelByName("vectorAdd");
   EXPECT_EQ(vector.getName(), "vectorAdd");
   EXPECT_EQ(vector.getArguments().size(), 4);
-  EXPECT_EQ(vector.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(vector.getArguments()[0].getName(), "arg0");
   EXPECT_EQ(vector.getArguments()[0].getType(), "float*");
-  EXPECT_EQ(vector.getArguments()[1].getName(), "arg2");
+  EXPECT_EQ(vector.getArguments()[1].getName(), "arg1");
   EXPECT_EQ(vector.getArguments()[1].getType(), "float*");
-  EXPECT_EQ(vector.getArguments()[2].getName(), "arg3");
+  EXPECT_EQ(vector.getArguments()[2].getName(), "arg2");
   EXPECT_EQ(vector.getArguments()[2].getType(), "float*");
-  EXPECT_EQ(vector.getArguments()[3].getName(), "arg4");
+  EXPECT_EQ(vector.getArguments()[3].getName(), "arg3");
   EXPECT_EQ(vector.getArguments()[3].getType(), "int");
 
   // Verify scalarKernel
   Kernel scalar = traced_manager.getKernelByName("scalarKernel");
   EXPECT_EQ(scalar.getName(), "scalarKernel");
   EXPECT_EQ(scalar.getArguments().size(), 3);
-  EXPECT_EQ(scalar.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(scalar.getArguments()[0].getName(), "arg0");
   EXPECT_EQ(scalar.getArguments()[0].getType(), "float*");
-  EXPECT_EQ(scalar.getArguments()[1].getName(), "arg2");
+  EXPECT_EQ(scalar.getArguments()[1].getName(), "arg1");
   EXPECT_EQ(scalar.getArguments()[1].getType(), "int");
-  EXPECT_EQ(scalar.getArguments()[2].getName(), "arg3");
+  EXPECT_EQ(scalar.getArguments()[2].getName(), "arg2");
   EXPECT_EQ(scalar.getArguments()[2].getType(), "float");
 
   // Verify simpleKernel
   Kernel simple = traced_manager.getKernelByName("simpleKernel");
   EXPECT_EQ(simple.getName(), "simpleKernel");
   EXPECT_EQ(simple.getArguments().size(), 1);
-  EXPECT_EQ(simple.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(simple.getArguments()[0].getName(), "arg0");
   EXPECT_EQ(simple.getArguments()[0].getType(), "float*");
 
   // Verify simpleKernelWithN
   Kernel simpleN = traced_manager.getKernelByName("simpleKernelWithN");
   EXPECT_EQ(simpleN.getName(), "simpleKernelWithN");
   EXPECT_EQ(simpleN.getArguments().size(), 2);
-  EXPECT_EQ(simpleN.getArguments()[0].getName(), "arg1");
+  EXPECT_EQ(simpleN.getArguments()[0].getName(), "arg0");
   EXPECT_EQ(simpleN.getArguments()[0].getType(), "float*");
-  EXPECT_EQ(simpleN.getArguments()[1].getName(), "arg2");
+  EXPECT_EQ(simpleN.getArguments()[1].getName(), "arg1");
   EXPECT_EQ(simpleN.getArguments()[1].getType(), "int");
 }
 
@@ -278,7 +278,7 @@ TEST_F(KernelManagerTest, EmptyManagerSerialization) {
 TEST_F(KernelManagerTest, MultipleKernelsSerialization) {
     // Add kernels to manager
     manager.addFromModuleSource(test_source);
-    ASSERT_EQ(manager.getNumKernels(), 4);
+    ASSERT_EQ(manager.getNumKernels(), 5);
 
     // Verify initial kernel loading
     EXPECT_NO_THROW(manager.getKernelByName("simpleKernel"));
@@ -675,8 +675,11 @@ TEST_F(KernelManagerTest, CompoundTypesParsing) {
     EXPECT_EQ(args[21].getName(), "arg21");
 }
 
-TEST_F(KernelManagerTest, QuickTest) {
-        const std::string test_source = R"(
+TEST_F(KernelManagerTest, ArgumentSerialization) {
+    KernelManager manager;
+    
+    // Create a test kernel source with various compound types
+    const std::string test_source = R"(
         __global__ void compoundTypesKernel(
             unsigned int value,
             unsigned long long counter,
@@ -699,8 +702,67 @@ TEST_F(KernelManagerTest, QuickTest) {
             __restrict__ unsigned int*,
             __restrict__ unsigned int* test_ptr,
             float4* in_scalar_float4,
-            char2
+            char2,
+            HIP_vector_type<float, 4>
         ) {}
     )";
-}
 
+    // Add the kernel to the manager
+    manager.addFromModuleSource(test_source);
+    Kernel original_kernel = manager.getKernelByName("compoundTypesKernel");
+    auto original_args = original_kernel.getArguments();
+
+    // Serialize to a temporary file
+    std::string temp_filename = "argument_test.bin";
+    {
+        std::ofstream outfile(temp_filename, std::ios::binary);
+        ASSERT_TRUE(outfile.is_open());
+        manager.serialize(outfile);
+    }
+
+    // Create new manager and deserialize
+    KernelManager new_manager;
+    {
+        std::ifstream infile(temp_filename, std::ios::binary);
+        ASSERT_TRUE(infile.is_open());
+        new_manager.deserialize(infile);
+    }
+
+    // Get the deserialized kernel and its arguments
+    Kernel deserialized_kernel = new_manager.getKernelByName("compoundTypesKernel");
+    auto deserialized_args = deserialized_kernel.getArguments();
+
+    // Verify the number of arguments matches
+    ASSERT_EQ(deserialized_args.size(), original_args.size());
+
+    // Verify each argument's properties
+    for (size_t i = 0; i < original_args.size(); i++) {
+        const auto& orig = original_args[i];
+        const auto& deser = deserialized_args[i];
+
+        // Test type preservation
+        EXPECT_EQ(deser.getType(), orig.getType()) 
+            << "Type mismatch at argument " << i;
+        
+        // Test name preservation
+        EXPECT_EQ(deser.getName(), orig.getName()) 
+            << "Name mismatch at argument " << i;
+        
+        // Test pointer property preservation
+        EXPECT_EQ(deser.isPointer(), orig.isPointer()) 
+            << "Pointer property mismatch at argument " << i;
+        
+        // Test vector size preservation
+        EXPECT_EQ(deser.getVectorSize(), orig.getVectorSize()) 
+            << "Vector size mismatch at argument " << i;
+        
+        // For vector types, test base type preservation
+        if (orig.getVectorSize() > 0) {
+            EXPECT_EQ(deser.getBaseType(), orig.getBaseType()) 
+                << "Base type mismatch at argument " << i;
+        }
+    }
+
+    // Clean up
+    std::remove(temp_filename.c_str());
+}
