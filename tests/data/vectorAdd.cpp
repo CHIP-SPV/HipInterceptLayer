@@ -3,18 +3,18 @@
 #include <stdlib.h>
 
 // Vector increment kernel using float4
-__global__ void vectorIncrementKernel(float4 input_vec4, float input_scalar, 
-                                    float4* output_vec4, float* output_scalar) {
+__global__ void vectorIncrementKernel(float4 in_scalar_float4, float in_scalar_float, 
+                                    float4* inout_vector_float4, float* inout_vector_float) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
     // Increment float4 component using the input value (not array)
-    output_vec4[idx].x = input_vec4.x + input_scalar;
-    output_vec4[idx].y = input_vec4.y + input_scalar;
-    output_vec4[idx].z = input_vec4.z + input_scalar;
-    output_vec4[idx].w = input_vec4.w + input_scalar;
+    inout_vector_float4[idx].x = in_scalar_float4.x + in_scalar_float;
+    inout_vector_float4[idx].y = in_scalar_float4.y + in_scalar_float;
+    inout_vector_float4[idx].z = in_scalar_float4.z + in_scalar_float;
+    inout_vector_float4[idx].w = in_scalar_float4.w + in_scalar_float;
     
     // Increment scalar component
-    output_scalar[idx] = input_scalar * 2.0f;  // Double the scalar value
+    inout_vector_float[idx] = in_scalar_float * 2.0f;  // Double the scalar value
 }
 
 int main() {
@@ -23,61 +23,63 @@ int main() {
     const size_t scalar_bytes = N * sizeof(float);
 
     // Host arrays for output
-    float4 *h_output_vec4;
-    float *h_output_scalar;
+    float4 *h_inout_vector_float4;
+    float *h_inout_vector_float;
     
     // Input values (not arrays)
-    float4 h_input_vec4;
-    float h_input_scalar;
+    float4 h_in_scalar_float4;
+    float h_in_scalar_float;
     
     // Device arrays (only for output)
-    float4 *d_output_vec4;
-    float *d_output_scalar;
+    float4 *d_inout_vector_float4;
+    float *d_inout_vector_float;
 
     // Initialize input values with non-zero values
-    h_input_vec4.x = 1.0f;
-    h_input_vec4.y = 2.0f;
-    h_input_vec4.z = 3.0f;
-    h_input_vec4.w = 4.0f;
-    h_input_scalar = 0.5f;
+    h_in_scalar_float4.x = 1.0f;
+    h_in_scalar_float4.y = 2.0f;
+    h_in_scalar_float4.z = 3.0f;
+    h_in_scalar_float4.w = 4.0f;
+    h_in_scalar_float = 0.5f;
 
     // Allocate host memory for output
-    h_output_vec4 = (float4*)malloc(vec4_bytes);
-    h_output_scalar = (float*)malloc(scalar_bytes);
+    h_inout_vector_float4 = (float4*)malloc(vec4_bytes);
+    h_inout_vector_float = (float*)malloc(scalar_bytes);
 
     // Allocate device memory (only for output)
-    hipMalloc(&d_output_vec4, vec4_bytes);
-    hipMalloc(&d_output_scalar, scalar_bytes);
+    hipMalloc(&d_inout_vector_float4, vec4_bytes);
+    hipMalloc(&d_inout_vector_float, scalar_bytes);
 
     // Launch kernel
     dim3 blockSize(256);
     dim3 gridSize((N + blockSize.x - 1) / blockSize.x);
     hipLaunchKernelGGL(vectorIncrementKernel, gridSize, blockSize, 0, 0,
-                       h_input_vec4, h_input_scalar, d_output_vec4, d_output_scalar);
+                       h_in_scalar_float4, h_in_scalar_float, 
+                       d_inout_vector_float4, d_inout_vector_float);
 
     // Copy results back to host
-    hipMemcpy(h_output_vec4, d_output_vec4, vec4_bytes, hipMemcpyDeviceToHost);
-    hipMemcpy(h_output_scalar, d_output_scalar, scalar_bytes, hipMemcpyDeviceToHost);
+    hipMemcpy(h_inout_vector_float4, d_inout_vector_float4, vec4_bytes, hipMemcpyDeviceToHost);
+    hipMemcpy(h_inout_vector_float, d_inout_vector_float, scalar_bytes, hipMemcpyDeviceToHost);
 
     // Verify results (check first few elements)
     printf("Input values:\n");
-    printf("  Input vec4: (%f, %f, %f, %f), scalar: %f\n",
-           h_input_vec4.x, h_input_vec4.y, h_input_vec4.z, h_input_vec4.w,
-           h_input_scalar);
+    printf("  in_scalar_float4: (%f, %f, %f, %f), in_scalar_float: %f\n",
+           h_in_scalar_float4.x, h_in_scalar_float4.y, h_in_scalar_float4.z, h_in_scalar_float4.w,
+           h_in_scalar_float);
     
     printf("\nFirst few elements of the result:\n");
     for(int i = 0; i < 5; i++) {
         printf("Element %d:\n", i);
-        printf("  Output vec4: (%f, %f, %f, %f), scalar: %f\n",
-               h_output_vec4[i].x, h_output_vec4[i].y, h_output_vec4[i].z, h_output_vec4[i].w,
-               h_output_scalar[i]);
+        printf("  inout_vector_float4: (%f, %f, %f, %f), inout_vector_float: %f\n",
+               h_inout_vector_float4[i].x, h_inout_vector_float4[i].y, 
+               h_inout_vector_float4[i].z, h_inout_vector_float4[i].w,
+               h_inout_vector_float[i]);
     }
 
     // Cleanup
-    hipFree(d_output_vec4);
-    hipFree(d_output_scalar);
-    free(h_output_vec4);
-    free(h_output_scalar);
+    hipFree(d_inout_vector_float4);
+    hipFree(d_inout_vector_float);
+    free(h_inout_vector_float4);
+    free(h_inout_vector_float);
 
     return 0;
 }
