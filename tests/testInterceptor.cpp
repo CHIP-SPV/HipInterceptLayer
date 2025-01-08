@@ -43,118 +43,66 @@ TEST_F(InterceptorTest, CompareVectorAddTraceWithSource) {
     EXPECT_EQ(kernel_op->block_dim.z, 1);
     EXPECT_EQ(kernel_op->shared_mem, 0);
 
-    // Verify pre_args
-    ASSERT_EQ(kernel_op->pre_args.size(), 2) << "Expected 2 pre_args (float4 and float)";
+    // Verify pre_args - should have 4 arguments
+    ASSERT_EQ(kernel_op->pre_args.size(), 4) << "Expected 4 arguments (in_scalar_float4, in_scalar_float, inout_vector_float4, inout_vector_float)";
     
-    // First argument should be float4 (16 bytes)
-    ASSERT_EQ(kernel_op->pre_args[0].total_size(), 16) << "Expected float4 to be 16 bytes";
-    const float4* input_vec4 = reinterpret_cast<const float4*>(kernel_op->pre_args[0].data.data());
-    std::cout << "Input float4: (" << input_vec4->x << ", " << input_vec4->y << ", " 
-              << input_vec4->z << ", " << input_vec4->w << ")" << std::endl;
+    // First argument: in_scalar_float4 (float4)
+    ASSERT_EQ(kernel_op->pre_args[0].total_size(), sizeof(float4)) << "Expected float4 to be 16 bytes";
+    const float4* in_scalar_float4 = reinterpret_cast<const float4*>(kernel_op->pre_args[0].data.data());
+    EXPECT_FLOAT_EQ(in_scalar_float4->x, 1.0f);
+    EXPECT_FLOAT_EQ(in_scalar_float4->y, 2.0f);
+    EXPECT_FLOAT_EQ(in_scalar_float4->z, 3.0f);
+    EXPECT_FLOAT_EQ(in_scalar_float4->w, 4.0f);
     
-    // Second argument should be float (4 bytes)
-    ASSERT_EQ(kernel_op->pre_args[1].total_size(), 8) << "Expected float to be 8 bytes";
-    const float* input_scalar = reinterpret_cast<const float*>(kernel_op->pre_args[1].data.data());
-    std::cout << "Input scalar: " << *input_scalar << std::endl;
+    // Second argument: in_scalar_float (float)
+    ASSERT_EQ(kernel_op->pre_args[1].total_size(), sizeof(float)) << "Expected float to be 4 bytes";
+    const float* in_scalar_float = reinterpret_cast<const float*>(kernel_op->pre_args[1].data.data());
+    EXPECT_FLOAT_EQ(*in_scalar_float, 0.5f);
 
-    // Expected values from vectorAdd.cpp
-    const float4 expected_input_vec4 = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
-    const float expected_input_scalar = 0.5f;
+    // Third argument: inout_vector_float4 (float4*)
+    const size_t N = 1024;  // Size from vectorAdd.cpp
+    ASSERT_EQ(kernel_op->pre_args[2].total_size(), N * sizeof(float4)) << "Expected array of 1024 float4s";
+    const float4* inout_vector_float4 = reinterpret_cast<const float4*>(kernel_op->pre_args[2].data.data());
+    
+    // Fourth argument: inout_vector_float (float*)
+    ASSERT_EQ(kernel_op->pre_args[3].total_size(), N * sizeof(float)) << "Expected array of 1024 floats";
+    const float* inout_vector_float = reinterpret_cast<const float*>(kernel_op->pre_args[3].data.data());
 
-    // Verify input values
-    EXPECT_FLOAT_EQ(input_vec4->x, expected_input_vec4.x);
-    EXPECT_FLOAT_EQ(input_vec4->y, expected_input_vec4.y);
-    EXPECT_FLOAT_EQ(input_vec4->z, expected_input_vec4.z);
-    EXPECT_FLOAT_EQ(input_vec4->w, expected_input_vec4.w);
-    EXPECT_FLOAT_EQ(*input_scalar, expected_input_scalar);
-
-    // Pre-execution state
-    ASSERT_FALSE(kernel_op->pre_args.empty()) << "No pre-execution arguments";
-    const auto& pre_arg = kernel_op->pre_args[0];  // Get first argument
-    std::cout << "Pre-arg data_type_size: " << pre_arg.data_type_size << std::endl;
-    std::cout << "Pre-arg array_size: " << pre_arg.array_size << std::endl;
-    ASSERT_GT(pre_arg.data.size(), 0);
-
-    // Get raw data from the first pre-argument
-    const float4* pre_vec4 = reinterpret_cast<const float4*>(pre_arg.data.data());
-    const float* pre_scalar = reinterpret_cast<const float*>(pre_vec4 + 1024);  // N=1024
-
-    // Print first few pre-state values
-    std::cout << "\nFirst few pre-state values:" << std::endl;
+    // Print first few pre-state values for debugging
+    std::cout << "\nPre-execution state:" << std::endl;
+    std::cout << "  in_scalar_float4: (" << in_scalar_float4->x << ", " << in_scalar_float4->y << ", "
+              << in_scalar_float4->z << ", " << in_scalar_float4->w << ")" << std::endl;
+    std::cout << "  in_scalar_float: " << *in_scalar_float << std::endl;
+    std::cout << "\nFirst few vector values:" << std::endl;
     for (int i = 0; i < 5; i++) {
-        std::cout << "  Index " << i << ": vec4=("
-                  << pre_vec4[i].x << ", " 
-                  << pre_vec4[i].y << ", "
-                  << pre_vec4[i].z << ", "
-                  << pre_vec4[i].w << "), "
-                  << "scalar=" << pre_scalar[i] << std::endl;
-    }
-
-    // Verify all pre-state values (should be uninitialized or zero)
-    for (int i = 0; i < 1024; i++) {
-        // We don't verify exact values since they're uninitialized
-        // but we can verify they exist and are accessible
-        volatile float x = pre_vec4[i].x;
-        volatile float y = pre_vec4[i].y;
-        volatile float z = pre_vec4[i].z;
-        volatile float w = pre_vec4[i].w;
-        volatile float s = pre_scalar[i];
-        (void)x; (void)y; (void)z; (void)w; (void)s;  // Prevent unused variable warnings
+        std::cout << "  Index " << i << ":" << std::endl;
+        std::cout << "    inout_vector_float4: (" << inout_vector_float4[i].x << ", " << inout_vector_float4[i].y << ", "
+                  << inout_vector_float4[i].z << ", " << inout_vector_float4[i].w << ")" << std::endl;
+        std::cout << "    inout_vector_float: " << inout_vector_float[i] << std::endl;
     }
 
     // Post-execution state
     ASSERT_FALSE(kernel_op->post_args.empty()) << "No post-execution arguments";
-    const auto& post_arg = kernel_op->post_args[0];  // Get first argument
-    std::cout << "Post-arg data_type_size: " << post_arg.data_type_size << std::endl;
-    std::cout << "Post-arg array_size: " << post_arg.array_size << std::endl;
-    ASSERT_GT(post_arg.data.size(), 0);
+    ASSERT_EQ(kernel_op->post_args.size(), 4) << "Expected 4 post-execution arguments";
 
-    // Get raw data from the first post-argument
-    const float4* output_vec4 = reinterpret_cast<const float4*>(post_arg.data.data());
-    const float* output_scalar = reinterpret_cast<const float*>(output_vec4 + 1024);  // N=1024
+    // Get post-execution arrays (only the output vectors change)
+    const float4* post_vector_float4 = reinterpret_cast<const float4*>(kernel_op->post_args[2].data.data());
+    const float* post_vector_float = reinterpret_cast<const float*>(kernel_op->post_args[3].data.data());
 
-    // Expected output values
-    const float4 expected_output_vec4 = make_float4(
-        expected_input_vec4.x + expected_input_scalar,
-        expected_input_vec4.y + expected_input_scalar,
-        expected_input_vec4.z + expected_input_scalar,
-        expected_input_vec4.w + expected_input_scalar
-    );
-    const float expected_output_scalar = expected_input_scalar * 2.0f;
-
-    // Print first few output values
-    std::cout << "\nFirst few post-state values:" << std::endl;
+    // Print first few post-state values and verify results
+    std::cout << "\nPost-execution state (first 5 elements):" << std::endl;
     for (int i = 0; i < 5; i++) {
-        std::cout << "  Index " << i << ": vec4=("
-                  << output_vec4[i].x << ", " 
-                  << output_vec4[i].y << ", "
-                  << output_vec4[i].z << ", "
-                  << output_vec4[i].w << "), "
-                  << "scalar=" << output_scalar[i] << std::endl;
-    }
+        std::cout << "  Index " << i << ":" << std::endl;
+        std::cout << "    inout_vector_float4: (" << post_vector_float4[i].x << ", " << post_vector_float4[i].y << ", "
+                  << post_vector_float4[i].z << ", " << post_vector_float4[i].w << ")" << std::endl;
+        std::cout << "    inout_vector_float: " << post_vector_float[i] << std::endl;
 
-    std::cout << "\nExpected output vec4: ("
-              << expected_output_vec4.x << ", "
-              << expected_output_vec4.y << ", "
-              << expected_output_vec4.z << ", "
-              << expected_output_vec4.w << ")" << std::endl;
-    std::cout << "Expected output scalar: " << expected_output_scalar << std::endl;
-
-    // Verify all output values
-    for (int i = 0; i < 1024; i++) {
-        // Verify vec4 components
-        EXPECT_FLOAT_EQ(output_vec4[i].x, expected_output_vec4.x)
-            << "Vec4.x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(output_vec4[i].y, expected_output_vec4.y)
-            << "Vec4.y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(output_vec4[i].z, expected_output_vec4.z)
-            << "Vec4.z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(output_vec4[i].w, expected_output_vec4.w)
-            << "Vec4.w mismatch at index " << i;
-
-        // Verify scalar value
-        EXPECT_FLOAT_EQ(output_scalar[i], expected_output_scalar)
-            << "Scalar mismatch at index " << i;
+        // Verify the results match the kernel computation
+        EXPECT_FLOAT_EQ(post_vector_float4[i].x, in_scalar_float4->x + *in_scalar_float);
+        EXPECT_FLOAT_EQ(post_vector_float4[i].y, in_scalar_float4->y + *in_scalar_float);
+        EXPECT_FLOAT_EQ(post_vector_float4[i].z, in_scalar_float4->z + *in_scalar_float);
+        EXPECT_FLOAT_EQ(post_vector_float4[i].w, in_scalar_float4->w + *in_scalar_float);
+        EXPECT_FLOAT_EQ(post_vector_float[i], *in_scalar_float * 2.0f);
     }
 }
 
@@ -180,366 +128,171 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
     std::cout << "  Block dim: " << kernel_op->block_dim.x << "," << kernel_op->block_dim.y << "," << kernel_op->block_dim.z << std::endl;
     std::cout << "  Shared mem: " << kernel_op->shared_mem << std::endl;
     std::cout << "  Number of arguments: " << kernel_op->arg_ptrs.size() << std::endl;
-    std::cout << "  Number of pre_args: " << kernel_op->pre_args.size() << std::endl;
     
     // Verify kernel launch parameters
     EXPECT_EQ(kernel_op->kernel_name, "computeNonbonded");
-    EXPECT_EQ(kernel_op->grid_dim.x, 2);
+    EXPECT_EQ(kernel_op->grid_dim.x, 2);  // NUM_BLOCKS = (128 + 64 - 1) / 64 = 2
     EXPECT_EQ(kernel_op->grid_dim.y, 1);
     EXPECT_EQ(kernel_op->grid_dim.z, 1);
-    EXPECT_EQ(kernel_op->block_dim.x, 64);
+    EXPECT_EQ(kernel_op->block_dim.x, 64);  // BLOCK_SIZE from source
     EXPECT_EQ(kernel_op->block_dim.y, 1);
     EXPECT_EQ(kernel_op->block_dim.z, 1);
     EXPECT_EQ(kernel_op->shared_mem, 0);
 
-    // Verify pre_args
-    ASSERT_EQ(kernel_op->pre_args.size(), 2) << "Expected 2 pre_args (float4 and float)";
-    
-    // Verify first argument (float4)
-    ASSERT_EQ(kernel_op->pre_args[0].total_size(), 16) << "Expected float4 to be 16 bytes";
-    const float4* input_vec4 = reinterpret_cast<const float4*>(kernel_op->pre_args[0].data.data());
-    EXPECT_FLOAT_EQ(input_vec4->x, 1.0f);
-    EXPECT_FLOAT_EQ(input_vec4->y, 2.0f);
-    EXPECT_FLOAT_EQ(input_vec4->z, 3.0f);
-    EXPECT_FLOAT_EQ(input_vec4->w, 4.0f);
-    
-    // Verify second argument (float)
-    ASSERT_EQ(kernel_op->pre_args[1].total_size(), 8) << "Expected float to be 8 bytes";
-    const float* input_scalar = reinterpret_cast<const float*>(kernel_op->pre_args[1].data.data());
-    EXPECT_FLOAT_EQ(*input_scalar, 42.0f);
+    // Verify pre_args - should have all kernel arguments
+    const int N = 128; // Size from source
+    ASSERT_EQ(kernel_op->pre_args.size(), 21) << "Expected 21 arguments for computeNonbonded kernel";
 
-    // Verify scalar arguments
-    const float4 expected_periodic_box_size = make_float4(10.0f, 10.0f, 10.0f, 0.0f);
-    const float4 expected_inv_periodic_box_size = make_float4(0.1f, 0.1f, 0.1f, 0.0f);
-    const float4 expected_periodic_box_vec_x = make_float4(10.0f, 0.0f, 0.0f, 0.0f);
-    const float4 expected_periodic_box_vec_y = make_float4(0.0f, 10.0f, 0.0f, 0.0f);
-    const float4 expected_periodic_box_vec_z = make_float4(0.0f, 0.0f, 10.0f, 0.0f);
-    const unsigned int expected_max_tiles = 128u;
-    const unsigned int expected_max_single_pairs = 128u;
-    const unsigned int expected_start_tile_index = 0u;
-    const unsigned long long expected_num_tile_indices = 128ull;
-
-    // Print and verify scalar values from pre_args
-    std::cout << "\nScalar values:" << std::endl;
-    for (size_t i = 0; i < kernel_op->pre_args.size(); i++) {
-        const auto& arg = kernel_op->pre_args[i];
-        std::cout << "  Value " << i << ": ";
-        switch(i) {
-            case 0: // startTileIndex (unsigned int)
-                {
-                    unsigned int val = *reinterpret_cast<const unsigned int*>(arg.data.data());
-                    std::cout << "startTileIndex=" << val;
-                    EXPECT_EQ(val, expected_start_tile_index) << "startTileIndex should be " << expected_start_tile_index;
-                }
-                break;
-            case 1: // numTileIndices (unsigned long long)
-                {
-                    unsigned long long val = *reinterpret_cast<const unsigned long long*>(arg.data.data());
-                    std::cout << "numTileIndices=" << val;
-                    EXPECT_EQ(val, expected_num_tile_indices) << "numTileIndices should be " << expected_num_tile_indices;
-                }
-                break;
-            case 2: // periodicBoxSize (float4)
-                {
-                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
-                    std::cout << "periodicBoxSize=(" << vec->x << ", " << vec->y << ", " 
-                             << vec->z << ", " << vec->w << ")";
-                    EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_size.x);
-                    EXPECT_FLOAT_EQ(vec->y, expected_periodic_box_size.y);
-                    EXPECT_FLOAT_EQ(vec->z, expected_periodic_box_size.z);
-                    EXPECT_FLOAT_EQ(vec->w, expected_periodic_box_size.w);
-                }
-                break;
-            case 3: // invPeriodicBoxSize (float4)
-                {
-                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
-                    std::cout << "invPeriodicBoxSize=(" << vec->x << ", " << vec->y << ", " 
-                             << vec->z << ", " << vec->w << ")";
-                    EXPECT_FLOAT_EQ(vec->x, expected_inv_periodic_box_size.x);
-                    EXPECT_FLOAT_EQ(vec->y, expected_inv_periodic_box_size.y);
-                    EXPECT_FLOAT_EQ(vec->z, expected_inv_periodic_box_size.z);
-                    EXPECT_FLOAT_EQ(vec->w, expected_inv_periodic_box_size.w);
-                }
-                break;
-            case 4: // periodicBoxVecX (float4)
-                {
-                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
-                    std::cout << "periodicBoxVecX=(" << vec->x << ", " << vec->y << ", " 
-                             << vec->z << ", " << vec->w << ")";
-                    EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_vec_x.x);
-                    EXPECT_FLOAT_EQ(vec->y, expected_periodic_box_vec_x.y);
-                    EXPECT_FLOAT_EQ(vec->z, expected_periodic_box_vec_x.z);
-                    EXPECT_FLOAT_EQ(vec->w, expected_periodic_box_vec_x.w);
-                }
-                break;
-            case 5: // periodicBoxVecY (float4)
-                {
-                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
-                    std::cout << "periodicBoxVecY=(" << vec->x << ", " << vec->y << ", " 
-                             << vec->z << ", " << vec->w << ")";
-                    EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_vec_y.x);
-                    EXPECT_FLOAT_EQ(vec->y, expected_periodic_box_vec_y.y);
-                    EXPECT_FLOAT_EQ(vec->z, expected_periodic_box_vec_y.z);
-                    EXPECT_FLOAT_EQ(vec->w, expected_periodic_box_vec_y.w);
-                }
-                break;
-            case 6: // periodicBoxVecZ (float4)
-                {
-                    const float4* vec = reinterpret_cast<const float4*>(arg.data.data());
-                    std::cout << "periodicBoxVecZ=(" << vec->x << ", " << vec->y << ", " 
-                             << vec->z << ", " << vec->w << ")";
-                    EXPECT_FLOAT_EQ(vec->x, expected_periodic_box_vec_z.x);
-                    EXPECT_FLOAT_EQ(vec->y, expected_periodic_box_vec_z.y);
-                    EXPECT_FLOAT_EQ(vec->z, expected_periodic_box_vec_z.z);
-                    EXPECT_FLOAT_EQ(vec->w, expected_periodic_box_vec_z.w);
-                }
-                break;
-            case 7: // maxTiles (unsigned int)
-                {
-                    unsigned int val = *reinterpret_cast<const unsigned int*>(arg.data.data());
-                    std::cout << "maxTiles=" << val;
-                    EXPECT_EQ(val, expected_max_tiles) << "maxTiles should be " << expected_max_tiles;
-                }
-                break;
-            case 8: // maxSinglePairs (unsigned int)
-                {
-                    unsigned int val = *reinterpret_cast<const unsigned int*>(arg.data.data());
-                    std::cout << "maxSinglePairs=" << val;
-                    EXPECT_EQ(val, expected_max_single_pairs) << "maxSinglePairs should be " << expected_max_single_pairs;
-                }
-                break;
-            default:
-                std::cout << "unknown type";
-        }
-        std::cout << std::endl;
+    // Verify each argument's size and initial values based on computeNonbondedRepro.cpp
+    // 1. forceBuffers (unsigned long long*)
+    ASSERT_EQ(kernel_op->pre_args[0].total_size(), N * sizeof(unsigned long long));
+    const unsigned long long* forceBuffers = reinterpret_cast<const unsigned long long*>(kernel_op->pre_args[0].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_EQ(forceBuffers[i], i) << "forceBuffers[" << i << "] mismatch";
     }
 
-    // Pre-execution state
-    ASSERT_FALSE(kernel_op->pre_args.empty()) << "No pre-execution arguments";
-    const auto& pre_arg = kernel_op->pre_args[0];  // Get first argument
-    std::cout << "Pre-arg data_type_size: " << pre_arg.data_type_size << std::endl;
-    std::cout << "Pre-arg array_size: " << pre_arg.array_size << std::endl;
-    ASSERT_GT(pre_arg.data.size(), 0);
-
-    // Get pointers to the different arrays in pre_state
-    const char* pre_data = pre_arg.data.data();
-    const unsigned long long* force_buffers = reinterpret_cast<const unsigned long long*>(pre_data);
-    const float* energy_buffer = reinterpret_cast<const float*>(force_buffers + 128);  // N=128
-    const float4* posq = reinterpret_cast<const float4*>(energy_buffer + 128);
-    const unsigned int* exclusions = reinterpret_cast<const unsigned int*>(posq + 128);
-    const int2* exclusion_tiles = reinterpret_cast<const int2*>(exclusions + 128);
-    const int* tiles = reinterpret_cast<const int*>(exclusion_tiles + 128);
-    const unsigned int* interaction_count = reinterpret_cast<const unsigned int*>(tiles + 128);
-    const float4* block_center = reinterpret_cast<const float4*>(interaction_count + 128);
-    const float4* block_size = reinterpret_cast<const float4*>(block_center + 128);
-    const unsigned int* interacting_atoms = reinterpret_cast<const unsigned int*>(block_size + 128);
-    const int2* single_pairs = reinterpret_cast<const int2*>(interacting_atoms + 128);
-    const float2* sigma_epsilon = reinterpret_cast<const float2*>(single_pairs + 128);
-
-    // Print first few values of each array for debugging
-    std::cout << "\nFirst few pre-state values:" << std::endl;
-    for (int i = 0; i < 3; i++) {
-        std::cout << "  Index " << i << ":" << std::endl;
-        std::cout << "    force_buffer: " << force_buffers[i] << std::endl;
-        std::cout << "    energy_buffer: " << energy_buffer[i] << std::endl;
-        std::cout << "    posq: (" << posq[i].x << ", " << posq[i].y << ", " 
-                  << posq[i].z << ", " << posq[i].w << ")" << std::endl;
-        std::cout << "    exclusions: " << exclusions[i] << std::endl;
-        std::cout << "    exclusion_tiles: (" << exclusion_tiles[i].x << ", " 
-                  << exclusion_tiles[i].y << ")" << std::endl;
-        std::cout << "    tiles: " << tiles[i] << std::endl;
-        std::cout << "    interaction_count: " << interaction_count[i] << std::endl;
-        std::cout << "    block_center: (" << block_center[i].x << ", " << block_center[i].y << ", "
-                  << block_center[i].z << ", " << block_center[i].w << ")" << std::endl;
-        std::cout << "    block_size: (" << block_size[i].x << ", " << block_size[i].y << ", "
-                  << block_size[i].z << ", " << block_size[i].w << ")" << std::endl;
-        std::cout << "    interacting_atoms: " << interacting_atoms[i] << std::endl;
-        std::cout << "    single_pairs: (" << single_pairs[i].x << ", " << single_pairs[i].y << ")" << std::endl;
-        std::cout << "    sigma_epsilon: (" << sigma_epsilon[i].x << ", " << sigma_epsilon[i].y << ")" << std::endl;
+    // 2. energyBuffer (float*)
+    ASSERT_EQ(kernel_op->pre_args[1].total_size(), N * sizeof(float));
+    const float* energyBuffer = reinterpret_cast<const float*>(kernel_op->pre_args[1].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_FLOAT_EQ(energyBuffer[i], static_cast<float>(i)) << "energyBuffer[" << i << "] mismatch";
     }
 
-    // Verify initial values based on computeNonbondedRepro.cpp initialization
-    for (int i = 0; i < 128; i++) {
-        // Check force buffers: initialized to i
-        EXPECT_EQ(force_buffers[i], static_cast<unsigned long long>(i))
-            << "Force buffer mismatch at index " << i;
-
-        // Check energy buffer: initialized to (float)i
-        EXPECT_FLOAT_EQ(energy_buffer[i], static_cast<float>(i))
-            << "Energy buffer mismatch at index " << i;
-
-        // Check posq: initialized to make_float4(i, i+0.1f, i+0.2f, i+0.3f)
-        EXPECT_FLOAT_EQ(posq[i].x, static_cast<float>(i))
-            << "posq.x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(posq[i].y, static_cast<float>(i) + 0.1f)
-            << "posq.y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(posq[i].z, static_cast<float>(i) + 0.2f)
-            << "posq.z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(posq[i].w, static_cast<float>(i) + 0.3f)
-            << "posq.w mismatch at index " << i;
-
-        // Check exclusions: initialized to i
-        EXPECT_EQ(exclusions[i], static_cast<unsigned int>(i))
-            << "Exclusions mismatch at index " << i;
-
-        // Check exclusion tiles: initialized to make_int2(i, i+1)
-        EXPECT_EQ(exclusion_tiles[i].x, i)
-            << "Exclusion tiles x mismatch at index " << i;
-        EXPECT_EQ(exclusion_tiles[i].y, i + 1)
-            << "Exclusion tiles y mismatch at index " << i;
-
-        // Check tiles: initialized to i
-        EXPECT_EQ(tiles[i], i)
-            << "Tiles mismatch at index " << i;
-
-        // Check interaction count: initialized to i
-        EXPECT_EQ(interaction_count[i], static_cast<unsigned int>(i))
-            << "Interaction count mismatch at index " << i;
-
-        // Check block center: initialized to make_float4(i+0.5f, i+0.6f, i+0.7f, i+0.8f)
-        EXPECT_FLOAT_EQ(block_center[i].x, i + 0.5f)
-            << "Block center x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(block_center[i].y, i + 0.6f)
-            << "Block center y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(block_center[i].z, i + 0.7f)
-            << "Block center z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(block_center[i].w, i + 0.8f)
-            << "Block center w mismatch at index " << i;
-
-        // Check block size: initialized to make_float4(1.0f, 1.0f, 1.0f, 1.0f)
-        EXPECT_FLOAT_EQ(block_size[i].x, 1.0f)
-            << "Block size x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(block_size[i].y, 1.0f)
-            << "Block size y mismatch at index " << i;
-        EXPECT_FLOAT_EQ(block_size[i].z, 1.0f)
-            << "Block size z mismatch at index " << i;
-        EXPECT_FLOAT_EQ(block_size[i].w, 1.0f)
-            << "Block size w mismatch at index " << i;
-
-        // Check interacting atoms: initialized to i
-        EXPECT_EQ(interacting_atoms[i], static_cast<unsigned int>(i))
-            << "Interacting atoms mismatch at index " << i;
-
-        // Check single pairs: initialized to make_int2(i, i+2)
-        EXPECT_EQ(single_pairs[i].x, i)
-            << "Single pairs x mismatch at index " << i;
-        EXPECT_EQ(single_pairs[i].y, i + 2)
-            << "Single pairs y mismatch at index " << i;
-
-        // Check sigma epsilon: initialized to make_float2(0.5f + i, 1.0f + i)
-        EXPECT_FLOAT_EQ(sigma_epsilon[i].x, 0.5f + i)
-            << "Sigma epsilon x mismatch at index " << i;
-        EXPECT_FLOAT_EQ(sigma_epsilon[i].y, 1.0f + i)
-            << "Sigma epsilon y mismatch at index " << i;
+    // 3. posq (float4*)
+    ASSERT_EQ(kernel_op->pre_args[2].total_size(), N * sizeof(float4));
+    const float4* posq = reinterpret_cast<const float4*>(kernel_op->pre_args[2].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_FLOAT_EQ(posq[i].x, i) << "posq[" << i << "].x mismatch";
+        EXPECT_FLOAT_EQ(posq[i].y, i + 0.1f) << "posq[" << i << "].y mismatch";
+        EXPECT_FLOAT_EQ(posq[i].z, i + 0.2f) << "posq[" << i << "].z mismatch";
+        EXPECT_FLOAT_EQ(posq[i].w, i + 0.3f) << "posq[" << i << "].w mismatch";
     }
 
-    // Post-execution state
-    ASSERT_FALSE(kernel_op->post_args.empty()) << "No post-execution arguments";
-    const auto& post_arg = kernel_op->post_args[0];  // Get first argument
-    std::cout << "Post-arg data_type_size: " << post_arg.data_type_size << std::endl;
-    std::cout << "Post-arg array_size: " << post_arg.array_size << std::endl;
-    ASSERT_GT(post_arg.data.size(), 0);
-
-    // Get pointers to the arrays in post_state
-    const char* post_data = post_arg.data.data();
-    const unsigned long long* post_force_buffers = reinterpret_cast<const unsigned long long*>(post_data);
-    const float* post_energy_buffer = reinterpret_cast<const float*>(post_force_buffers + 128);
-    const float4* post_posq = reinterpret_cast<const float4*>(post_energy_buffer + 128);
-    const unsigned int* post_exclusions = reinterpret_cast<const unsigned int*>(post_posq + 128);
-    const int2* post_exclusion_tiles = reinterpret_cast<const int2*>(post_exclusions + 128);
-    const int* post_tiles = reinterpret_cast<const int*>(post_exclusion_tiles + 128);
-    const unsigned int* post_interaction_count = reinterpret_cast<const unsigned int*>(post_tiles + 128);
-    const float4* post_block_center = reinterpret_cast<const float4*>(post_interaction_count + 128);
-    const float4* post_block_size = reinterpret_cast<const float4*>(post_block_center + 128);
-    const unsigned int* post_interacting_atoms = reinterpret_cast<const unsigned int*>(post_block_size + 128);
-    const int2* post_single_pairs = reinterpret_cast<const int2*>(post_interacting_atoms + 128);
-    const float2* post_sigma_epsilon = reinterpret_cast<const float2*>(post_single_pairs + 128);
-
-    // Print first few post-state values for debugging
-    std::cout << "\nFirst few post-state values:" << std::endl;
-    for (int i = 0; i < 3; i++) {
-        std::cout << "  Index " << i << ":" << std::endl;
-        std::cout << "    force_buffer: " << post_force_buffers[i] << std::endl;
-        std::cout << "    energy_buffer: " << post_energy_buffer[i] << std::endl;
-        std::cout << "    posq: (" << post_posq[i].x << ", " << post_posq[i].y << ", "
-                  << post_posq[i].z << ", " << post_posq[i].w << ")" << std::endl;
-        std::cout << "    exclusions: " << post_exclusions[i] << std::endl;
-        std::cout << "    exclusion_tiles: (" << post_exclusion_tiles[i].x << ", "
-                  << post_exclusion_tiles[i].y << ")" << std::endl;
-        std::cout << "    tiles: " << post_tiles[i] << std::endl;
-        std::cout << "    interaction_count: " << post_interaction_count[i] << std::endl;
-        std::cout << "    block_center: (" << post_block_center[i].x << ", " << post_block_center[i].y << ", "
-                  << post_block_center[i].z << ", " << post_block_center[i].w << ")" << std::endl;
-        std::cout << "    block_size: (" << post_block_size[i].x << ", " << post_block_size[i].y << ", "
-                  << post_block_size[i].z << ", " << post_block_size[i].w << ")" << std::endl;
-        std::cout << "    interacting_atoms: " << post_interacting_atoms[i] << std::endl;
-        std::cout << "    single_pairs: (" << post_single_pairs[i].x << ", " << post_single_pairs[i].y << ")" << std::endl;
-        std::cout << "    sigma_epsilon: (" << post_sigma_epsilon[i].x << ", " << post_sigma_epsilon[i].y << ")" << std::endl;
+    // 4. exclusions (tileflags*)
+    ASSERT_EQ(kernel_op->pre_args[3].total_size(), N * sizeof(tileflags));
+    const tileflags* exclusions = reinterpret_cast<const tileflags*>(kernel_op->pre_args[3].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_EQ(exclusions[i], static_cast<tileflags>(i)) << "exclusions[" << i << "] mismatch";
     }
 
-    // Verify all output values
-    for (int i = 0; i < 128; i++) {
-        // Verify force buffers
-        EXPECT_EQ(post_force_buffers[i], static_cast<unsigned long long>(i + 1))
-            << "Force buffer mismatch at index " << i;
-        
-        // Verify energy buffer
-        EXPECT_FLOAT_EQ(post_energy_buffer[i], static_cast<float>(i + 1))
-            << "Energy buffer mismatch at index " << i;
-        
-        // Verify tiles
-        EXPECT_EQ(post_tiles[i], i + 1)
-            << "Post tiles mismatch at index " << i;
-        
-        // Verify interaction count
-        EXPECT_EQ(post_interaction_count[i], static_cast<unsigned int>(i + 1))
-            << "Post interaction count mismatch at index " << i;
+    // 5. exclusionTiles (int2*)
+    ASSERT_EQ(kernel_op->pre_args[4].total_size(), N * sizeof(int2));
+    const int2* exclusionTiles = reinterpret_cast<const int2*>(kernel_op->pre_args[4].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_EQ(exclusionTiles[i].x, i) << "exclusionTiles[" << i << "].x mismatch";
+        EXPECT_EQ(exclusionTiles[i].y, i + 1) << "exclusionTiles[" << i << "].y mismatch";
+    }
 
-        // Verify interacting atoms
-        EXPECT_EQ(post_interacting_atoms[i], static_cast<unsigned int>(i + 1))
-            << "Post interacting atoms mismatch at index " << i;
+    // 6. startTileIndex (unsigned int)
+    ASSERT_EQ(kernel_op->pre_args[5].total_size(), sizeof(unsigned int));
+    const unsigned int* startTileIndex = reinterpret_cast<const unsigned int*>(kernel_op->pre_args[5].data.data());
+    EXPECT_EQ(*startTileIndex, 0u) << "startTileIndex mismatch";
 
-        // Verify that other arrays remain unchanged
-        // posq should remain unchanged
-        EXPECT_FLOAT_EQ(post_posq[i].x, static_cast<float>(i))
-            << "Post posq.x should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_posq[i].y, static_cast<float>(i) + 0.1f)
-            << "Post posq.y should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_posq[i].z, static_cast<float>(i) + 0.2f)
-            << "Post posq.z should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_posq[i].w, static_cast<float>(i) + 0.3f)
-            << "Post posq.w should remain unchanged at index " << i;
+    // 7. numTileIndices (unsigned long long)
+    ASSERT_EQ(kernel_op->pre_args[6].total_size(), sizeof(unsigned long long));
+    const unsigned long long* numTileIndices = reinterpret_cast<const unsigned long long*>(kernel_op->pre_args[6].data.data());
+    EXPECT_EQ(*numTileIndices, N) << "numTileIndices mismatch";
 
-        // block_center should remain unchanged
-        EXPECT_FLOAT_EQ(post_block_center[i].x, i + 0.5f)
-            << "Post block center x should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_block_center[i].y, i + 0.6f)
-            << "Post block center y should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_block_center[i].z, i + 0.7f)
-            << "Post block center z should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_block_center[i].w, i + 0.8f)
-            << "Post block center w should remain unchanged at index " << i;
+    // 8. tiles (int*)
+    ASSERT_EQ(kernel_op->pre_args[7].total_size(), N * sizeof(int));
+    const int* tiles = reinterpret_cast<const int*>(kernel_op->pre_args[7].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_EQ(tiles[i], i) << "tiles[" << i << "] mismatch";
+    }
 
-        // block_size should remain unchanged
-        EXPECT_FLOAT_EQ(post_block_size[i].x, 1.0f)
-            << "Post block size x should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_block_size[i].y, 1.0f)
-            << "Post block size y should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_block_size[i].z, 1.0f)
-            << "Post block size z should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_block_size[i].w, 1.0f)
-            << "Post block size w should remain unchanged at index " << i;
+    // 9. interactionCount (unsigned int*)
+    ASSERT_EQ(kernel_op->pre_args[8].total_size(), N * sizeof(unsigned int));
+    const unsigned int* interactionCount = reinterpret_cast<const unsigned int*>(kernel_op->pre_args[8].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_EQ(interactionCount[i], static_cast<unsigned int>(i)) << "interactionCount[" << i << "] mismatch";
+    }
 
-        // single_pairs should remain unchanged
-        EXPECT_EQ(post_single_pairs[i].x, i)
-            << "Post single pairs x should remain unchanged at index " << i;
-        EXPECT_EQ(post_single_pairs[i].y, i + 2)
-            << "Post single pairs y should remain unchanged at index " << i;
+    // 10. periodicBoxSize (float4)
+    ASSERT_EQ(kernel_op->pre_args[9].total_size(), sizeof(float4));
+    const float4* periodicBoxSize = reinterpret_cast<const float4*>(kernel_op->pre_args[9].data.data());
+    EXPECT_FLOAT_EQ(periodicBoxSize->x, 10.0f) << "periodicBoxSize.x mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxSize->y, 10.0f) << "periodicBoxSize.y mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxSize->z, 10.0f) << "periodicBoxSize.z mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxSize->w, 0.0f) << "periodicBoxSize.w mismatch";
 
-        // sigma_epsilon should remain unchanged
-        EXPECT_FLOAT_EQ(post_sigma_epsilon[i].x, 0.5f + i)
-            << "Post sigma epsilon x should remain unchanged at index " << i;
-        EXPECT_FLOAT_EQ(post_sigma_epsilon[i].y, 1.0f + i)
-            << "Post sigma epsilon y should remain unchanged at index " << i;
+    // 11. invPeriodicBoxSize (float4)
+    ASSERT_EQ(kernel_op->pre_args[10].total_size(), sizeof(float4));
+    const float4* invPeriodicBoxSize = reinterpret_cast<const float4*>(kernel_op->pre_args[10].data.data());
+    EXPECT_FLOAT_EQ(invPeriodicBoxSize->x, 0.1f) << "invPeriodicBoxSize.x mismatch";
+    EXPECT_FLOAT_EQ(invPeriodicBoxSize->y, 0.1f) << "invPeriodicBoxSize.y mismatch";
+    EXPECT_FLOAT_EQ(invPeriodicBoxSize->z, 0.1f) << "invPeriodicBoxSize.z mismatch";
+    EXPECT_FLOAT_EQ(invPeriodicBoxSize->w, 0.0f) << "invPeriodicBoxSize.w mismatch";
+
+    // 12-14. periodicBoxVecX/Y/Z (float4)
+    const float4* periodicBoxVecX = reinterpret_cast<const float4*>(kernel_op->pre_args[11].data.data());
+    const float4* periodicBoxVecY = reinterpret_cast<const float4*>(kernel_op->pre_args[12].data.data());
+    const float4* periodicBoxVecZ = reinterpret_cast<const float4*>(kernel_op->pre_args[13].data.data());
+
+    EXPECT_FLOAT_EQ(periodicBoxVecX->x, 10.0f) << "periodicBoxVecX.x mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecX->y, 0.0f) << "periodicBoxVecX.y mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecX->z, 0.0f) << "periodicBoxVecX.z mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecX->w, 0.0f) << "periodicBoxVecX.w mismatch";
+
+    EXPECT_FLOAT_EQ(periodicBoxVecY->x, 0.0f) << "periodicBoxVecY.x mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecY->y, 10.0f) << "periodicBoxVecY.y mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecY->z, 0.0f) << "periodicBoxVecY.z mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecY->w, 0.0f) << "periodicBoxVecY.w mismatch";
+
+    EXPECT_FLOAT_EQ(periodicBoxVecZ->x, 0.0f) << "periodicBoxVecZ.x mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecZ->y, 0.0f) << "periodicBoxVecZ.y mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecZ->z, 10.0f) << "periodicBoxVecZ.z mismatch";
+    EXPECT_FLOAT_EQ(periodicBoxVecZ->w, 0.0f) << "periodicBoxVecZ.w mismatch";
+
+    // 15. maxTiles (unsigned int)
+    ASSERT_EQ(kernel_op->pre_args[14].total_size(), sizeof(unsigned int));
+    const unsigned int* maxTiles = reinterpret_cast<const unsigned int*>(kernel_op->pre_args[14].data.data());
+    EXPECT_EQ(*maxTiles, N) << "maxTiles mismatch";
+
+    // 16. blockCenter (float4*)
+    ASSERT_EQ(kernel_op->pre_args[15].total_size(), N * sizeof(float4));
+    const float4* blockCenter = reinterpret_cast<const float4*>(kernel_op->pre_args[15].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_FLOAT_EQ(blockCenter[i].x, i + 0.5f) << "blockCenter[" << i << "].x mismatch";
+        EXPECT_FLOAT_EQ(blockCenter[i].y, i + 0.6f) << "blockCenter[" << i << "].y mismatch";
+        EXPECT_FLOAT_EQ(blockCenter[i].z, i + 0.7f) << "blockCenter[" << i << "].z mismatch";
+        EXPECT_FLOAT_EQ(blockCenter[i].w, i + 0.8f) << "blockCenter[" << i << "].w mismatch";
+    }
+
+    // 17. blockSize (float4*)
+    ASSERT_EQ(kernel_op->pre_args[16].total_size(), N * sizeof(float4));
+    const float4* blockSize = reinterpret_cast<const float4*>(kernel_op->pre_args[16].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_FLOAT_EQ(blockSize[i].x, 1.0f) << "blockSize[" << i << "].x mismatch";
+        EXPECT_FLOAT_EQ(blockSize[i].y, 1.0f) << "blockSize[" << i << "].y mismatch";
+        EXPECT_FLOAT_EQ(blockSize[i].z, 1.0f) << "blockSize[" << i << "].z mismatch";
+        EXPECT_FLOAT_EQ(blockSize[i].w, 1.0f) << "blockSize[" << i << "].w mismatch";
+    }
+
+    // 18. interactingAtoms (unsigned int*)
+    ASSERT_EQ(kernel_op->pre_args[17].total_size(), N * sizeof(unsigned int));
+    const unsigned int* interactingAtoms = reinterpret_cast<const unsigned int*>(kernel_op->pre_args[17].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_EQ(interactingAtoms[i], static_cast<unsigned int>(i)) << "interactingAtoms[" << i << "] mismatch";
+    }
+
+    // 19. maxSinglePairs (unsigned int)
+    ASSERT_EQ(kernel_op->pre_args[18].total_size(), sizeof(unsigned int));
+    const unsigned int* maxSinglePairs = reinterpret_cast<const unsigned int*>(kernel_op->pre_args[18].data.data());
+    EXPECT_EQ(*maxSinglePairs, N) << "maxSinglePairs mismatch";
+
+    // 20. singlePairs (int2*)
+    ASSERT_EQ(kernel_op->pre_args[19].total_size(), N * sizeof(int2));
+    const int2* singlePairs = reinterpret_cast<const int2*>(kernel_op->pre_args[19].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_EQ(singlePairs[i].x, i) << "singlePairs[" << i << "].x mismatch";
+        EXPECT_EQ(singlePairs[i].y, i + 2) << "singlePairs[" << i << "].y mismatch";
+    }
+
+    // 21. global_nonbonded0_sigmaEpsilon (float2*)
+    ASSERT_EQ(kernel_op->pre_args[20].total_size(), N * sizeof(float2));
+    const float2* sigmaEpsilon = reinterpret_cast<const float2*>(kernel_op->pre_args[20].data.data());
+    for (int i = 0; i < N; i++) {
+        EXPECT_FLOAT_EQ(sigmaEpsilon[i].x, 0.5f + i) << "sigmaEpsilon[" << i << "].x mismatch";
+        EXPECT_FLOAT_EQ(sigmaEpsilon[i].y, 1.0f + i) << "sigmaEpsilon[" << i << "].y mismatch";
     }
 }
