@@ -25,8 +25,8 @@ function(add_test_binary TARGET_NAME SOURCE_FILE)
     add_dependencies(tests ${TARGET_NAME})
 endfunction()
 
-add_test_binary(testInterceptor testInterceptor.cpp)
-add_test_binary(testKernelManager testKernelManager.cpp)
+add_test_binary(testInterceptor testInterceptor.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc)
+add_test_binary(testKernelManager testKernelManager.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc)
 
 function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
     # Create the executable
