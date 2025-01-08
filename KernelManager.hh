@@ -44,7 +44,7 @@ static std::vector<std::string> known_keywords = {
     "char3",   "char4",    "uchar2",  "uchar3",   "uchar4",    "short2",
     "short3",  "short4",   "ushort2", "ushort3",  "ushort4",   "int2",
     "int3",    "int4",     "uint2",   "uint3",    "uint4",     "long2",
-    "long3",   "long4",    "ulong2",  "ulong3",   "ulong4"
+    "long3",   "long4",    "ulong2",  "ulong3",   "ulong4", "const",
 };
 
 static bool isKeyword(const std::string& str) {

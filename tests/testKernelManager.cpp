@@ -594,7 +594,9 @@ TEST_F(KernelManagerTest, CompoundTypesParsing) {
             __restrict__ unsigned int* test_ptr,
             float4* in_scalar_float4,
             char2,
-            HIP_vector_type<float, 4>
+            HIP_vector_type<float, 4>,
+            HIP_vector_type<float, 4u> const*,
+            const float4 *__restrict__ posq
         ) {}
     )";
 
@@ -673,6 +675,15 @@ TEST_F(KernelManagerTest, CompoundTypesParsing) {
 
     EXPECT_EQ(args[21].getType(), "char2");
     EXPECT_EQ(args[21].getName(), "arg21");
+
+    EXPECT_EQ(args[22].getType(), "HIP_vector_type<float, 4>");
+    EXPECT_EQ(args[22].getName(), "arg22");
+
+    EXPECT_EQ(args[23].getType(), "HIP_vector_type<float, 4u> const*");
+    EXPECT_EQ(args[23].getName(), "arg23");
+
+    EXPECT_EQ(args[24].getType(), "const float4 *__restrict__");
+    EXPECT_EQ(args[24].getName(), "posq");
 }
 
 TEST_F(KernelManagerTest, ArgumentSerialization) {
