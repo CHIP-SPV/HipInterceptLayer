@@ -63,7 +63,7 @@ void Tracer::finalizeTrace(std::string final_trace_path) {
     final_trace.close();
     trace_file_.close();
     
-    std::cout << "\n\nTrace finalized successfully with # of operations: " << trace_.operations.size() << std::endl;
+    std::cout << "\n\nTrace finalized successfully with # of operations: " << trace_.operations.size() << " saved to " << final_trace_path << std::endl;
     // kernel_manager_ << std::cout;
     initialized_ = false;
 }
