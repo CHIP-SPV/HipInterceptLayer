@@ -305,7 +305,38 @@ private:
                 ss << "    if (!loadTraceData(trace_file, " << current_offset << ", sizeof(" 
                    << arg.getBaseType() << "), &" << var_name 
                    << ")) { return 1; }\n";
-                ss << "    std::cout << \"Scalar value for " << var_name << ": \" << " << var_name << " << std::endl;\n";
+                
+                // Handle vector types differently
+                if (arg.getVectorSize() > 0) {
+                    std::string base_type = arg.getBaseType();
+                    bool is_integer = base_type.find("char") != std::string::npos || 
+                                    base_type.find("int") != std::string::npos ||
+                                    base_type.find("long") != std::string::npos;
+                    
+                    ss << "    std::cout << \"Vector value for " << var_name << ": (\" << ";
+                    if (is_integer) {
+                        ss << "static_cast<int>(" << var_name << ".x) << \", \" << "
+                           << "static_cast<int>(" << var_name << ".y)";
+                        if (arg.getVectorSize() >= 3) {
+                            ss << " << \", \" << static_cast<int>(" << var_name << ".z)";
+                        }
+                        if (arg.getVectorSize() >= 4) {
+                            ss << " << \", \" << static_cast<int>(" << var_name << ".w)";
+                        }
+                    } else {
+                        ss << var_name << ".x << \", \" << " 
+                           << var_name << ".y";
+                        if (arg.getVectorSize() >= 3) {
+                            ss << " << \", \" << " << var_name << ".z";
+                        }
+                        if (arg.getVectorSize() >= 4) {
+                            ss << " << \", \" << " << var_name << ".w";
+                        }
+                    }
+                    ss << " << \")\" << std::endl;\n";
+                } else {
+                    ss << "    std::cout << \"Scalar value for " << var_name << ": \" << " << var_name << " << std::endl;\n";
+                }
                 current_offset += arg_state.total_size();
                 scalar_arg_idx++;
             } else {

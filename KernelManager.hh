@@ -197,9 +197,8 @@ private:
         }
 
         if (longest_match == 0) {
-            if (type.find("*") != std::string::npos) {
+            if (is_pointer) 
                 return sizeof(void*); 
-            } 
 
             std::cerr << "Unknown type : " << type << std::endl;
             std::abort();
