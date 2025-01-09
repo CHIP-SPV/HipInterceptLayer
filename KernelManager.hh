@@ -197,7 +197,11 @@ private:
         }
 
         if (longest_match == 0) {
-            std::cerr << "Unknown type: " << type << std::endl;
+            if (type.find("*") != std::string::npos) {
+                return sizeof(void*); 
+            } 
+
+            std::cerr << "Unknown type : " << type << std::endl;
             std::abort();
         }
         
