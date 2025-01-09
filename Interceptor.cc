@@ -340,6 +340,66 @@ std::string getFunctionSignatureFromSource(const std::string &source,
   return "";
 }
 
+std::string typeSub(const std::string &source) {
+  std::string result = source;
+  std::map<std::string, std::string> replacements;
+  
+  // Regular expressions for matching different type definitions
+  std::regex typedef_regex(R"(typedef\s+([^;]+)\s+(\w+);)");
+  std::regex using_regex(R"(using\s+(\w+)\s*=\s*([^;]+);)");
+  std::regex define_regex(R"(#define\s+(\w+)\s+([^\n]+))");
+  
+  // First pass: collect all type definitions and remove the lines
+  std::string::const_iterator search_start(source.cbegin());
+  std::smatch match;
+  
+  // Find all typedefs and remove them
+  while (std::regex_search(result, match, typedef_regex)) {
+    replacements[match[2]] = match[1];
+    // Remove the typedef line
+    result.erase(match.position(), match.length());
+  }
+  
+  // Find all using declarations and remove them
+  while (std::regex_search(result, match, using_regex)) {
+    replacements[match[1]] = match[2];
+    // Remove the using line
+    result.erase(match.position(), match.length());
+  }
+  
+  // Find all #define macros and remove them
+  while (std::regex_search(result, match, define_regex)) {
+    replacements[match[1]] = match[2];
+    // Remove the #define line
+    result.erase(match.position(), match.length());
+  }
+  
+  // Resolve chained typedefs to their base types
+  bool changed;
+  do {
+    changed = false;
+    for (auto &[alias, type] : replacements) {
+      // For each word in the type, check if it's an alias and replace it
+      for (const auto &[search_alias, replacement] : replacements) {
+        std::regex word_regex("\\b" + search_alias + "\\b");
+        std::string new_type = std::regex_replace(type, word_regex, replacement);
+        if (new_type != type) {
+          type = new_type;
+          changed = true;
+        }
+      }
+    }
+  } while (changed);
+  
+  // Second pass: perform replacements
+  for (const auto &[alias, original] : replacements) {
+    std::regex word_regex("\\b" + alias + "\\b");
+    result = std::regex_replace(result, word_regex, original);
+  }
+  
+  return result;
+}
+
 // Add this helper function in the anonymous namespace
 void parseKernelsFromSource(const std::string &source) {
 
@@ -425,6 +485,26 @@ std::string preprocess_source(const std::string &source, int numHeaders,
     std::cerr << "Preprocessing failed with code " << result << std::endl;
     return source;
   }
+
+  // read the preprocessed file from output_path and apply type substitution
+  std::ifstream input_file(output_path);
+  if (!input_file) {
+    std::cerr << "Failed to read preprocessed file for type substitution" << std::endl;
+    return source;
+  }
+  std::string typeSubbed;
+  {
+    std::stringstream buffer;
+    buffer << input_file.rdbuf();
+    typeSubbed = typeSub(buffer.str());
+  }
+  
+  std::ofstream output_file(output_path);
+  if (!output_file) {
+    std::cerr << "Failed to write type-substituted file" << std::endl;
+    return source;
+  }
+  output_file << typeSubbed;
 
   // Read preprocessed output
   std::ifstream preprocessed_file(output_path);
