@@ -21,52 +21,62 @@ The HIP Intercept Layer provides tools to:
    ```bash
    mkdir build && cd build
    cmake ..
-   make -
+   make
    ```
 
 3. Set environment variables:
    ```bash
    # Set location for trace files
    export HIP_TRACE_LOCATION=/path/to/trace/dir
+   # default: $HOME/HipInterceptLayerTraces
+   ```
 
-   default: $HOME/HipInterceptLayerTraces
-      ```
+## Command Line Options
+
+The HipInterceptCompare tool supports the following commands:
+
+1. Compare two traces:
+   ```bash
+   HipInterceptCompare <trace1> <trace2>
+   ```
+   Shows differences between two execution traces, including:
+   - Kernel configuration differences (grid/block dimensions)
+   - Argument value differences (pre and post execution)
+   - Memory operation differences
+
+2. Generate kernel reproducer:
+   ```bash
+   HipInterceptCompare <trace> --gen-repro <operation_number>
+   ```
+   Creates a standalone reproducer for a specific kernel execution, including:
+   - Complete kernel source if available
+   - Input data setup
+   - Kernel launch configuration
+   - Pre/post execution value comparison
+
+3. Print detailed values:
+   ```bash
+   HipInterceptCompare <trace> --print-vals
+   ```
+   Shows detailed information for each operation in the trace:
+   - Kernel configurations
+   - Pre-execution argument values/checksums
+   - Post-execution argument values/checksums
 
 ## Example Usage
 
 ```bash     
-LD_PRELOAD="/space/pvelesko/install/HIP/HipInterceptLayer/lib/libHIPIntercept.so /opt/rocm-6.2.4/lib/libamdhip64.so.6.2.60204"  /space/pvelesko/openmm/build/TestHipATMForce "single"
+# Run your application with the intercept layer
+LD_PRELOAD="/path/to/libHIPIntercept.so /path/to/libamdhip64.so" ./your_application
 
-cd $HIP_TRACE_LOCATION
-/space/pvelesko/install/HIP/HipInterceptLayer/bin/HipInterceptCompare ./TestHipATMForce-0.trace ./TestHipATMForce-1.trace
+# Compare two trace files
+HipInterceptCompare ./trace1.trace ./trace2.trace
 
-Traces differ at:
-
-Kernel #0 (clearTwoBuffers)
-  Config differences: Grid dimensions differ, Block dimensions differ
-  Arg 2: 76800 pre-exec diffs (first: idx 0: 0 vs -0.372549)
-
-Kernel #1 (copyState)
-  Arg 2: 27 pre-exec diffs (first: idx 3: 0 vs -0.372549), 27 post-exec diffs (first: idx 3: 0 vs -0.372549)
-
-Kernel #2 (clearTwoBuffers)
-  Config differences: Grid dimensions differ, Block dimensions differ
-  Arg 2: 76800 pre-exec diffs (first: idx 0: 0 vs -0.372549)
-
-Kernel #3 (computeParameters)
-  Arg 2: 1 pre-exec diffs (first: idx 0: 0 vs -0.372549), 1 post-exec diffs (first: idx 0: 0 vs -0.372549)
-
-....
-
-Kernel #498 (integrateLangevinMiddlePart1)
-  Arg 2: 81 pre-exec diffs (first: idx 0: -3.21502e+06 vs -0.281743), 81 post-exec diffs (first: idx 0: -3.215e+06 vs -0.281266)
-
-Kernel #499 (integrateLangevinMiddlePart2)
-  Arg 3: 81 pre-exec diffs (first: idx 0: -12885.9 vs -0.00114601), 81 post-exec diffs (first: idx 0: -12834.3 vs -0.00112499)
-  Arg 2: 81 pre-exec diffs (first: idx 0: -12885.9 vs -0.00114601), 81 post-exec diffs (first: idx 0: -12834.3 vs -0.00112499)
-  Arg 1: 81 pre-exec diffs (first: idx 0: -3.215e+06 vs -0.281266), 81 post-exec diffs (first: idx 0: -3.20217e+06 vs -0.281229)
-
-Memory operation errors: Different number of events in traces
-
+# Generate a reproducer for operation #5
+HipInterceptCompare ./trace1.trace --gen-repro 5
 ```
 
+The reproducer output will show:
+- PRE-EXECUTION VALUES: Initial state of all arguments
+- POST-EXECUTION VALUES: Final state after kernel execution
+- SUMMARY OF CHANGES: List of arguments that were modified by the kernel
