@@ -258,6 +258,9 @@ private:
 
     ss << "    std::cout << \"\\nPRE-EXECUTION VALUES:\\n\";\n";
     
+    // Add vector to store pre-execution checksums
+    ss << "    std::vector<std::pair<size_t, uint64_t>> pre_checksums;\n";
+    
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
         const auto &arg_state = op->pre_args[i];
@@ -281,6 +284,9 @@ private:
                << ", (void*)" << var_name << "_h)) { return 1; }\n";
             ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
                << arg_size << ", hipMemcpyHostToDevice));\n";
+            
+            // Store pre-execution checksum
+            ss << "    pre_checksums.push_back({" << i << ", calculateChecksum((const char*)" << var_name << "_h, " << arg_size << ")});\n";
             
             // Print checksum
             ss << "    std::cout << \"  Arg " << i << " (" << arg.getType() << "): checksum = \" << "
@@ -359,6 +365,9 @@ private:
     
     ss << "    std::cout << \"\\nPOST-EXECUTION VALUES:\\n\";\n";
     
+    // Add vector to store post-execution checksums
+    ss << "    std::vector<std::pair<size_t, uint64_t>> post_checksums;\n";
+    
     // Print all arguments after kernel execution
     size_t pointer_arg_idx = 0;
     for (size_t i = 0; i < args.size(); i++) {
@@ -370,6 +379,9 @@ private:
             
             ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_h, (const void*)" << var_name << "_d, "
                << arg_size << ", hipMemcpyDeviceToHost));\n";
+            
+            // Store post-execution checksum
+            ss << "    post_checksums.push_back({" << i << ", calculateChecksum((const char*)" << var_name << "_h, " << arg_size << ")});\n";
             
             // Print checksum
             ss << "    std::cout << \"  Arg " << i << " (" << arg.getType() << "): checksum = \" << "
@@ -413,6 +425,20 @@ private:
 
   void generateCleanup(std::stringstream &ss) {
     ss << "\n    // Cleanup\n";
+    ss << "\n    std::cout << \"\\nSUMMARY OF CHANGES:\\n\";\n";
+    ss << "    bool any_changes = false;\n";
+    ss << "    for (size_t i = 0; i < pre_checksums.size(); i++) {\n";
+    ss << "        if (pre_checksums[i].second != post_checksums[i].second) {\n";
+    ss << "            any_changes = true;\n";
+    ss << "            std::cout << \"  Arg \" << pre_checksums[i].first << \": checksum changed from \" \n";
+    ss << "                      << static_cast<int64_t>(pre_checksums[i].second) << \" to \" \n";
+    ss << "                      << static_cast<int64_t>(post_checksums[i].second) << std::endl;\n";
+    ss << "        }\n";
+    ss << "    }\n";
+    ss << "    if (!any_changes) {\n";
+    ss << "        std::cout << \"  No changes detected in any pointer arguments\\n\";\n";
+    ss << "    }\n\n";
+    
     for (const auto &var : declared_vars_) {
         if (var.find("_d") != std::string::npos) {
             ss << "    if (" << var << ") hipFree((void*)" << var << ");\n";
