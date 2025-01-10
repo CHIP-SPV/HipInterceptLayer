@@ -213,12 +213,12 @@ private:
       }
 
       if (arg.isPointer()) {
-        ss << "    " << arg.getBaseType() << "* " << var_name << "_h = nullptr;\n";
-        ss << "    " << arg.getBaseType() << "* " << var_name << "_d = nullptr;\n";
+        ss << "    " << arg.getType() << " " << var_name << "_h = nullptr;\n";
+        ss << "    " << arg.getType() << " " << var_name << "_d = nullptr;\n";
         declared_vars_.insert(var_name + "_h");
         declared_vars_.insert(var_name + "_d");
       } else {
-        ss << "    " << arg.getBaseType() << " " << var_name << ";\n";
+        ss << "    " << arg.getType() << " " << var_name << ";\n";
         declared_vars_.insert(var_name);
       }
     }
@@ -280,8 +280,7 @@ private:
             }
             
             ss << "    // Allocate and initialize " << var_name << "\n";
-            ss << "    " << var_name << "_h = (" << arg.getBaseType() << "*)malloc("
-               << arg_size << ");\n";
+            ss << "    " << var_name << "_h = (" << arg.getType() << ")malloc(" << arg_size << ");\n";
             ss << "    if (!" << var_name << "_h) { std::cerr << \"Failed to allocate host memory\\n\"; return 1; }\n";
             
             ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << arg_size << "));\n";
@@ -289,11 +288,8 @@ private:
             // Load data from trace and copy to device
             ss << "    // Load pre-execution state from trace\n";
             ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_size 
-               << ", " << var_name << "_h)) { return 1; }\n";
-            ss << "    // Copy data from host to device using hipMemcpy with hipMemcpyHostToDevice\n";
-            ss << "    // Note: Using hipMemcpyHostToDevice to copy data from host to device\n";
-            ss << "    // hipMemcpyHostToDevice is used to copy data from host to device\n";
-            ss << "    // Using hipMemcpyHostToDevice to transfer data from host to device memory\n";
+               << ", (void*)" << var_name << "_h)) { return 1; }\n";
+            ss << "    // Copy data from host to device\n";
             ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
                << arg_size << ", hipMemcpyHostToDevice));\n\n";
             current_offset += arg_size;
@@ -308,6 +304,7 @@ private:
                 
                 // Handle vector types differently
                 if (arg.getVectorSize() > 0) {
+                    std::cout << "Generating vector output for " << var_name << " with vector size " << arg.getVectorSize() << std::endl;
                     std::string base_type = arg.getBaseType();
                     bool is_integer = base_type.find("char") != std::string::npos || 
                                     base_type.find("int") != std::string::npos ||
