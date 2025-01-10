@@ -35,7 +35,7 @@ inline bool loadTraceData(const char* filename, std::size_t offset, std::size_t 
     
     // Calculate and print the checksum
     float checksum = calculateChecksum(static_cast<char*>(dest), size);
-    std::cout << "Checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
+    // std::cout << "Checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
     return true;
 }
 

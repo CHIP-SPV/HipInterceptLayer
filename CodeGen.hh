@@ -55,6 +55,10 @@ public:
     // Generate variable declarations for specific operation
     generateDeclarations(ss, exec);
 
+    // Create data file and update trace file path
+    std::string data_file = generateDataFile(exec);
+    ss << "    const char* trace_file = \"" << data_file << "\";\n\n";
+
     // Generate initialization code for specific operation
     generateInitialization(ss, exec);
 
@@ -133,6 +137,23 @@ public:
     }
   }
 
+  std::string generateDataFile(KernelExecution *op) {
+    // Create a temporary file to store the raw argument data
+    std::string data_file = trace_file_path_ + ".data";
+    std::ofstream file(data_file, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to create data file: " + data_file);
+    }
+
+    // Write all argument data sequentially
+    for (const auto& arg_state : op->pre_args) {
+        file.write(arg_state.data.data(), arg_state.total_size());
+    }
+
+    file.close();
+    return data_file;
+  }
+
 private:
   const KernelManager &kernel_manager_;
   std::unordered_set<std::string> declared_vars_;
@@ -192,8 +213,7 @@ private:
     headers_file.close();
 
     ss << "int main() {\n"
-       << "    hipError_t err;\n"
-       << "    const char* trace_file = \"" << trace_file_path_ << "\";\n\n";
+       << "    hipError_t err;\n\n";
   }
 
   void generateDeclarations(std::stringstream &ss,
@@ -233,43 +253,12 @@ private:
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
     const auto &args = kernel.getArguments();
 
-    size_t current_offset = 0;
     size_t pointer_arg_idx = 0;  // Track which pointer argument we're on
-    size_t scalar_arg_idx = 0;   // Track which scalar argument we're on
-
-    // First pass: count pointer arguments to validate arg_sizes
-    size_t num_pointer_args = 0;
-    for (const auto &arg : args) {
-        if (arg.isPointer()) num_pointer_args++;
-    }
-
-    // Validate arg_sizes
-    if (op->arg_sizes.empty() && num_pointer_args > 0) {
-        std::cerr << "Error: No argument sizes available for kernel " << op->kernel_name << std::endl;
-        throw std::runtime_error("Missing argument sizes");
-    }
-    if (op->arg_sizes.size() != num_pointer_args) {
-        std::cerr << "Error: Mismatch in number of pointer arguments (" << num_pointer_args 
-                  << ") and argument sizes (" << op->arg_sizes.size() << ")" << std::endl;
-        throw std::runtime_error("Argument size mismatch");
-    }
-
-    // Map to store device pointers and their memory operations
-    std::unordered_map<void*, const MemoryOperation*> device_ptrs;
-
-    // Look for memory operations before this kernel
-    for (size_t i = 0; i < operation_index_; i++) {
-        auto prev_op = tracer.getOperation(i);
-        if (prev_op->isMemory()) {
-            auto mem_op = static_cast<const MemoryOperation*>(prev_op.get());
-            if (mem_op->type == MemoryOpType::COPY && mem_op->kind == hipMemcpyHostToDevice) {
-                device_ptrs[mem_op->dst] = mem_op;
-            }
-        }
-    }
+    size_t current_offset = 0;   // Track offset in data file
 
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
+        const auto &arg_state = op->pre_args[i];
         std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
 
         if (arg.isPointer()) {
@@ -285,61 +274,54 @@ private:
             
             ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << arg_size << "));\n";
 
-            // Load data from trace and copy to device
-            ss << "    // Load pre-execution state from trace\n";
-            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_size 
+            // Load data from data file
+            ss << "    // Load pre-execution state from data file\n";
+            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_state.total_size() 
                << ", (void*)" << var_name << "_h)) { return 1; }\n";
-            ss << "    // Copy data from host to device\n";
             ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
                << arg_size << ", hipMemcpyHostToDevice));\n\n";
-            current_offset += arg_size;
+            
+            current_offset += arg_state.total_size();
             pointer_arg_idx++;
         } else {
-            if (scalar_arg_idx < op->pre_args.size()) {
-                const auto& arg_state = op->pre_args[scalar_arg_idx];
-                ss << "    // Load scalar argument from trace\n";
-                ss << "    if (!loadTraceData(trace_file, " << current_offset << ", sizeof(" 
-                   << arg.getBaseType() << "), &" << var_name 
-                   << ")) { return 1; }\n";
+            ss << "    // Load scalar argument from data file\n";
+            ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_state.total_size()
+               << ", (void*)&" << var_name << ")) { return 1; }\n";
+            
+            // Handle vector types differently
+            if (arg.getVectorSize() > 0) {
+                std::cout << "Generating vector output for " << var_name << " with vector size " << arg.getVectorSize() << std::endl;
+                std::string base_type = arg.getBaseType();
+                bool is_integer = base_type.find("char") != std::string::npos || 
+                                base_type.find("int") != std::string::npos ||
+                                base_type.find("long") != std::string::npos;
                 
-                // Handle vector types differently
-                if (arg.getVectorSize() > 0) {
-                    std::cout << "Generating vector output for " << var_name << " with vector size " << arg.getVectorSize() << std::endl;
-                    std::string base_type = arg.getBaseType();
-                    bool is_integer = base_type.find("char") != std::string::npos || 
-                                    base_type.find("int") != std::string::npos ||
-                                    base_type.find("long") != std::string::npos;
-                    
-                    ss << "    std::cout << \"Vector value for " << var_name << ": (\" << ";
-                    if (is_integer) {
-                        ss << "static_cast<int>(" << var_name << ".x) << \", \" << "
-                           << "static_cast<int>(" << var_name << ".y)";
-                        if (arg.getVectorSize() >= 3) {
-                            ss << " << \", \" << static_cast<int>(" << var_name << ".z)";
-                        }
-                        if (arg.getVectorSize() >= 4) {
-                            ss << " << \", \" << static_cast<int>(" << var_name << ".w)";
-                        }
-                    } else {
-                        ss << var_name << ".x << \", \" << " 
-                           << var_name << ".y";
-                        if (arg.getVectorSize() >= 3) {
-                            ss << " << \", \" << " << var_name << ".z";
-                        }
-                        if (arg.getVectorSize() >= 4) {
-                            ss << " << \", \" << " << var_name << ".w";
-                        }
+                ss << "    std::cout << \"Vector value for " << var_name << ": (\" << ";
+                if (is_integer) {
+                    ss << "static_cast<int>(" << var_name << ".x) << \", \" << "
+                       << "static_cast<int>(" << var_name << ".y)";
+                    if (arg.getVectorSize() >= 3) {
+                        ss << " << \", \" << static_cast<int>(" << var_name << ".z)";
                     }
-                    ss << " << \")\" << std::endl;\n";
+                    if (arg.getVectorSize() >= 4) {
+                        ss << " << \", \" << static_cast<int>(" << var_name << ".w)";
+                    }
                 } else {
-                    ss << "    std::cout << \"Scalar value for " << var_name << ": \" << " << var_name << " << std::endl;\n";
+                    ss << var_name << ".x << \", \" << " 
+                       << var_name << ".y";
+                    if (arg.getVectorSize() >= 3) {
+                        ss << " << \", \" << " << var_name << ".z";
+                    }
+                    if (arg.getVectorSize() >= 4) {
+                        ss << " << \", \" << " << var_name << ".w";
+                    }
                 }
-                current_offset += arg_state.total_size();
-                scalar_arg_idx++;
+                ss << " << \")\" << std::endl;\n";
             } else {
-                std::cerr << "Error: Missing scalar value for argument " << i << " of kernel " << op->kernel_name << std::endl;
-                throw std::runtime_error("Missing scalar value");
+                ss << "    std::cout << \"Scalar value for " << var_name << ": \" << " << var_name << " << std::endl;\n";
             }
+            
+            current_offset += arg_state.total_size();
         }
     }
   }
