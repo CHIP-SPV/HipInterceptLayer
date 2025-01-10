@@ -256,6 +256,8 @@ private:
     size_t pointer_arg_idx = 0;  // Track which pointer argument we're on
     size_t current_offset = 0;   // Track offset in data file
 
+    ss << "    std::cout << \"\\nPRE-EXECUTION VALUES:\\n\";\n";
+    
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
         const auto &arg_state = op->pre_args[i];
@@ -275,28 +277,30 @@ private:
             ss << "    CHECK_HIP(hipMalloc((void**)&" << var_name << "_d, " << arg_size << "));\n";
 
             // Load data from data file
-            ss << "    // Load pre-execution state from data file\n";
             ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_state.total_size() 
                << ", (void*)" << var_name << "_h)) { return 1; }\n";
             ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_d, (const void*)" << var_name << "_h, "
-               << arg_size << ", hipMemcpyHostToDevice));\n\n";
+               << arg_size << ", hipMemcpyHostToDevice));\n";
+            
+            // Print checksum
+            ss << "    std::cout << \"  Arg " << i << " (" << arg.getType() << "): checksum = \" << "
+               << "calculateChecksum((const char*)" << var_name << "_h, " << arg_size << ") << std::endl;\n\n";
             
             current_offset += arg_state.total_size();
             pointer_arg_idx++;
         } else {
-            ss << "    // Load scalar argument from data file\n";
             ss << "    if (!loadTraceData(trace_file, " << current_offset << ", " << arg_state.total_size()
                << ", (void*)&" << var_name << ")) { return 1; }\n";
             
-            // Handle vector types differently
+            // Print value
+            ss << "    std::cout << \"  Arg " << i << " (" << arg.getType() << "): \";\n";
             if (arg.getVectorSize() > 0) {
-                std::cout << "Generating vector output for " << var_name << " with vector size " << arg.getVectorSize() << std::endl;
                 std::string base_type = arg.getBaseType();
                 bool is_integer = base_type.find("char") != std::string::npos || 
                                 base_type.find("int") != std::string::npos ||
                                 base_type.find("long") != std::string::npos;
                 
-                ss << "    std::cout << \"Vector value for " << var_name << ": (\" << ";
+                ss << "    std::cout << \"(\" << ";
                 if (is_integer) {
                     ss << "static_cast<int>(" << var_name << ".x) << \", \" << "
                        << "static_cast<int>(" << var_name << ".y)";
@@ -318,7 +322,7 @@ private:
                 }
                 ss << " << \")\" << std::endl;\n";
             } else {
-                ss << "    std::cout << \"Scalar value for " << var_name << ": \" << " << var_name << " << std::endl;\n";
+                ss << "    std::cout << " << var_name << " << std::endl;\n";
             }
             
             current_offset += arg_state.total_size();
@@ -350,17 +354,56 @@ private:
     ss << "    CHECK_HIP(hipDeviceSynchronize());\n"
        << "    CHECK_HIP(hipGetLastError());\n\n";
     
-    // Verify pointer arguments using their individual sizes
+    ss << "    std::cout << \"\\nPOST-EXECUTION VALUES:\\n\";\n";
+    
+    // Print all arguments after kernel execution
     size_t pointer_arg_idx = 0;
     for (size_t i = 0; i < args.size(); i++) {
         const auto &arg = args[i];
+        std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
+        
         if (arg.isPointer()) {
-            std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
             size_t arg_size = op->arg_sizes[pointer_arg_idx++];
             
-            ss << "    // Copy back and verify " << var_name << "\n"
-               << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_h, (const void*)" << var_name << "_d, "
-               << arg_size << ", hipMemcpyDeviceToHost));\n\n";
+            ss << "    CHECK_HIP(hipMemcpy((void*)" << var_name << "_h, (const void*)" << var_name << "_d, "
+               << arg_size << ", hipMemcpyDeviceToHost));\n";
+            
+            // Print checksum
+            ss << "    std::cout << \"  Arg " << i << " (" << arg.getType() << "): checksum = \" << "
+               << "calculateChecksum((const char*)" << var_name << "_h, " << arg_size << ") << std::endl;\n";
+        } else {
+            // Print value
+            ss << "    std::cout << \"  Arg " << i << " (" << arg.getType() << "): \";\n";
+            if (arg.getVectorSize() > 0) {
+                std::string base_type = arg.getBaseType();
+                bool is_integer = base_type.find("char") != std::string::npos || 
+                                base_type.find("int") != std::string::npos ||
+                                base_type.find("long") != std::string::npos;
+                
+                ss << "    std::cout << \"(\" << ";
+                if (is_integer) {
+                    ss << "static_cast<int>(" << var_name << ".x) << \", \" << "
+                       << "static_cast<int>(" << var_name << ".y)";
+                    if (arg.getVectorSize() >= 3) {
+                        ss << " << \", \" << static_cast<int>(" << var_name << ".z)";
+                    }
+                    if (arg.getVectorSize() >= 4) {
+                        ss << " << \", \" << static_cast<int>(" << var_name << ".w)";
+                    }
+                } else {
+                    ss << var_name << ".x << \", \" << " 
+                       << var_name << ".y";
+                    if (arg.getVectorSize() >= 3) {
+                        ss << " << \", \" << " << var_name << ".z";
+                    }
+                    if (arg.getVectorSize() >= 4) {
+                        ss << " << \", \" << " << var_name << ".w";
+                    }
+                }
+                ss << " << \")\" << std::endl;\n";
+            } else {
+                ss << "    std::cout << " << var_name << " << std::endl;\n";
+            }
         }
     }
   }
