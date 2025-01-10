@@ -335,6 +335,9 @@ private:
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
 
     ss << "    // Launch kernel " << kernel.getName() << "\n";
+    if (kernel.getModuleSource().empty()) {
+        ss << "    std::cout << \"\nWARNING: Launching kernel with placeholder implementation - original source code not available\\n\";\n";
+    }
     ss << "    dim3 grid(" << op->grid_dim.x << ", " << op->grid_dim.y << ", "
        << op->grid_dim.z << ");\n";
     ss << "    dim3 block(" << op->block_dim.x << ", " << op->block_dim.y
