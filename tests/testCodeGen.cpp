@@ -1,9 +1,10 @@
 #include <gtest/gtest.h>
-#include "CodeGen.hh"
+#include "../CodeGen.hh"
 #include "KernelManager.hh"
 #include "Tracer.hh"
 #include "data/test_kernels.hh"
 #include <fstream>
+#include <filesystem>
 
 // Helper function to save and print generated code
 void saveAndPrintCode(const std::string& test_name, const std::string& generated_code) {
@@ -136,4 +137,90 @@ TEST(CodeGenTest, KernelDeclarationsIncluded) {
                                   "arg_1_vectorAdd_d, arg_2_vectorAdd_d, arg_3_vectorAdd)") 
                 != std::string::npos)
         << "Kernel call not found or incorrect in generated code";
+}
+
+TEST(CodeGenTest, ComputeNonbondedReproducer) {
+    std::string trace_file = std::string(CMAKE_BINARY_DIR) + "/tests/computeNonbondedRepro-0.trace";
+    
+    // Run HIPInterceptCompare with --gen-repro to generate and execute the reproducer
+    std::string temp_dir = "/tmp/compute_nonbonded_reproducer";
+    std::filesystem::create_directories(temp_dir);
+    
+    auto cmd = "HIP_TRACE_LOCATION=" + std::string(CMAKE_BINARY_DIR) + "/tests " + std::string(CMAKE_BINARY_DIR) + "/HIPInterceptCompare " + trace_file + " --gen-repro 12";
+    std::cout << "Running command: " << cmd << std::endl;
+    // The kernel operation is at index 12 in the trace
+    FILE* pipe = popen(cmd.c_str(), "r");
+    ASSERT_TRUE(pipe != nullptr);
+    
+    // Read the output
+    char buffer[5000];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    
+    // Check the return code
+    int status = pclose(pipe);
+    EXPECT_EQ(WEXITSTATUS(status), 0) << "HIPInterceptCompare failed with output:\n" << output;
+    
+    // Expected checksums from the original execution
+    std::map<std::string, int> expected_checksums = {
+        {"forceBuffers", 8000},
+        {"energyBuffer", 5210},
+        {"tiles", 8000},
+        {"interactionCount", 8000},
+        {"interactingAtoms", 8000}
+    };
+    
+    // Verify the checksums in the output
+    bool found_checksums = false;
+    std::map<std::string, int> actual_checksums;
+    std::istringstream output_stream(output);
+    std::string line;
+    
+    while (std::getline(output_stream, line)) {
+        if (line.find("POST-EXECUTION ARGUMENT VALUES:") != std::string::npos) {
+            found_checksums = true;
+            continue;
+        }
+        
+        if (found_checksums && line.find("checksum:") != std::string::npos) {
+            // Extract the argument name and checksum
+            size_t arg_pos = line.find("Arg ");
+            size_t checksum_pos = line.find("checksum: ");
+            if (arg_pos != std::string::npos && checksum_pos != std::string::npos) {
+                // Get the argument index
+                int arg_idx = std::stoi(line.substr(arg_pos + 4));
+                // Get the checksum value
+                int checksum = std::stoi(line.substr(checksum_pos + 10));
+                
+                // Map argument indices to names based on the kernel signature
+                std::string arg_name;
+                switch (arg_idx) {
+                    case 0: arg_name = "forceBuffers"; break;
+                    case 1: arg_name = "energyBuffer"; break;
+                    case 7: arg_name = "tiles"; break;
+                    case 8: arg_name = "interactionCount"; break;
+                    case 17: arg_name = "interactingAtoms"; break;
+                }
+                
+                if (!arg_name.empty()) {
+                    actual_checksums[arg_name] = checksum;
+                }
+            }
+        }
+    }
+    
+    // Verify all expected checksums are present and match
+    for (const auto& [name, expected] : expected_checksums) {
+        ASSERT_TRUE(actual_checksums.count(name) > 0) 
+            << "Missing checksum for " << name;
+        EXPECT_EQ(actual_checksums[name], expected) 
+            << "Checksum mismatch for " << name 
+            << ". Expected: " << expected 
+            << ", Actual: " << actual_checksums[name];
+    }
+    
+    // Clean up temporary files
+    std::filesystem::remove_all(temp_dir);
 }
