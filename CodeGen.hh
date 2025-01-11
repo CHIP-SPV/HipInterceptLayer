@@ -22,7 +22,7 @@ public:
       : tracer(trace_file_path), operation_index_(-1), trace_file_path_(trace_file_path), kernel_manager_(tracer.getKernelManager()) {
         tracer.setSerializeTrace(false);
       }
-  std::string generateReproducer(std::string kernel_name, int instance_index) {
+  std::string generateReproducer(std::string kernel_name, int instance_index, bool debug_mode = false) {
     // Find all operations for the given kernel name and instance index
     std::vector<int> operation_indices;
     for (size_t i = 0; i < tracer.getNumOperations(); i++) {
@@ -35,11 +35,11 @@ public:
     if (operation_indices.empty()) {
       throw std::runtime_error("Kernel not found in trace");
     }
-    return generateReproducer(operation_indices[instance_index]);
+    return generateReproducer(operation_indices[instance_index], debug_mode);
   }
 
   // Generate complete reproducer code
-  std::string generateReproducer(int operation_index) {
+  std::string generateReproducer(int operation_index, bool debug_mode = false) {
     auto op = tracer.getOperation(operation_index);
     if (!op->isKernel()) {
       throw std::runtime_error("Operation is not a kernel execution");
@@ -50,7 +50,7 @@ public:
     std::stringstream ss;
 
     // Generate includes and main function header
-    generateHeader(ss, exec);
+    generateHeader(ss, exec, debug_mode);
 
     // Generate variable declarations for specific operation
     generateDeclarations(ss, exec);
@@ -63,7 +63,7 @@ public:
     generateInitialization(ss, exec);
 
     // Generate single kernel launch
-    generateKernelLaunches(ss, exec);
+    generateKernelLaunches(ss, exec, debug_mode);
 
     // Generate cleanup code
     generateCleanup(ss);
@@ -73,7 +73,8 @@ public:
 
   // Generate and write the code to a file
   std::string generateFile(int operation_index,
-                           const std::string &output_dir = "/tmp") {
+                           const std::string &output_dir = "/tmp",
+                           bool debug_mode = false) {
     std::filesystem::path dir_path(output_dir);
     std::filesystem::create_directories(dir_path);
 
@@ -91,7 +92,7 @@ public:
       throw std::runtime_error("Failed to create output file: " + filename);
     }
 
-    file << generateReproducer(operation_index);
+    file << generateReproducer(operation_index, debug_mode);
     file.close();
 
     std::cout << "\n\nGenerated code:\n" << std::ifstream(filename).rdbuf() << std::endl;
@@ -126,9 +127,10 @@ public:
 
   // Convenience method to generate and compile in one step
   bool generateAndCompile(int operation_index,
-                          const std::string &output_dir = "/tmp") {
+                          const std::string &output_dir = "/tmp",
+                          bool debug_mode = false) {
     try {
-      std::string filename = generateFile(operation_index, output_dir);
+      std::string filename = generateFile(operation_index, output_dir, debug_mode);
       return compileFile(filename, output_dir);
     } catch (const std::exception &e) {
       std::cerr << "Error during generate and compile: " << e.what()
@@ -160,7 +162,8 @@ private:
   int operation_index_;
 
   void generateHeader(std::stringstream &ss,
-                      KernelExecution *op) {
+                      KernelExecution *op,
+                      bool debug_mode = false) {
     ss << "#include <hip/hip_runtime.h>\n"
        << "#include <iostream>\n"
        << "#include <cstring>\n"
@@ -337,7 +340,8 @@ private:
   }
 
   void generateKernelLaunches(std::stringstream &ss,
-                              KernelExecution *op) {
+                              KernelExecution *op,
+                              bool debug_mode = false) {
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
 
     ss << "    // Launch kernel " << kernel.getName() << "\n";

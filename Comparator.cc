@@ -18,7 +18,7 @@ namespace {
     void printUsage(const char* program) {
         std::cerr << "Usage:\n"
                   << "  " << program << " <trace1> [trace2]     Compare two traces\n"
-                  << "  " << program << " <trace> --gen-repro <op#>   Generate reproducer for operation\n"
+                  << "  " << program << " <trace> --gen-repro <op#> [--debug]   Generate reproducer for operation\n"
                   << "  " << program << " <trace> --print-vals   Print checksums and scalar values\n";
     }
 
@@ -68,7 +68,7 @@ namespace {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 2 && argc != 3 && argc != 4) {
+    if (argc != 2 && argc != 3 && argc != 4 && argc != 5) {
         printUsage(argv[0]);
         return 1;
     }
@@ -94,12 +94,13 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    else if (argc == 4 && std::string(argv[2]) == "--gen-repro") {
+    else if (argc >= 4 && std::string(argv[2]) == "--gen-repro") {
         try {
             int op_index = std::stoi(argv[3]);
             CodeGen codegen(argv[1]);
             auto output_dir = std::filesystem::current_path().string();
-            if (codegen.generateAndCompile(op_index, output_dir)) {
+            bool debug_mode = (argc == 5 && std::string(argv[4]) == "--debug");
+            if (codegen.generateAndCompile(op_index, output_dir, debug_mode)) {
                 std::cout << "Successfully generated and compiled reproducer for operation " << op_index << "\n";
                 return 0;
             }
