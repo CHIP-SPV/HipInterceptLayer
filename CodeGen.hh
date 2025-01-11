@@ -19,7 +19,7 @@ public:
   Tracer tracer;
   std::string trace_file_path_;
   CodeGen(const std::string &trace_file_path)
-      : tracer(trace_file_path), operation_index_(-1), trace_file_path_(trace_file_path), kernel_manager_(tracer.getKernelManager()) {
+      : tracer(trace_file_path), operation_index_(-1), trace_file_path_(trace_file_path), kernel_manager_(tracer.getKernelManager()), kernel_lines_(0) {
         tracer.setSerializeTrace(false);
       }
   std::string generateReproducer(std::string kernel_name, int instance_index, bool debug_mode = false) {
@@ -53,20 +53,20 @@ public:
     generateHeader(ss, exec, debug_mode);
 
     // Generate variable declarations for specific operation
-    generateDeclarations(ss, exec);
+    generateDeclarations(ss, exec, debug_mode);
 
     // Create data file and update trace file path
     std::string data_file = generateDataFile(exec);
     ss << "    const char* trace_file = \"" << data_file << "\";\n\n";
 
     // Generate initialization code for specific operation
-    generateInitialization(ss, exec);
+    generateInitialization(ss, exec, debug_mode);
 
     // Generate single kernel launch
     generateKernelLaunches(ss, exec, debug_mode);
 
     // Generate cleanup code
-    generateCleanup(ss);
+    generateCleanup(ss, debug_mode);
 
     return ss.str();
   }
@@ -160,6 +160,7 @@ private:
   const KernelManager &kernel_manager_;
   std::unordered_set<std::string> declared_vars_;
   int operation_index_;
+  size_t kernel_lines_;  // Number of lines in the kernel source for debug mode
 
   void generateHeader(std::stringstream &ss,
                       KernelExecution *op,
@@ -183,6 +184,33 @@ private:
       // Also remove standalone extern "C"
       std::regex standalone_extern_c(R"(extern\s*"C"\s*)");
       source = std::regex_replace(source, standalone_extern_c, "");
+
+      if (debug_mode) {
+        // Find where kernel starts, then first { from there and move backwards to find the parameter list end
+        size_t kernel_start = source.find(kernel.getName());
+        if (kernel_start != std::string::npos) {
+          size_t first_brace = source.find('{', kernel_start);
+          if (first_brace != std::string::npos) {
+            // Search backwards from the opening brace to find the closing parenthesis
+            size_t param_end = source.rfind(')', first_brace);
+            if (param_end != std::string::npos) {
+              // Find the opening parenthesis by counting backwards
+              int paren_count = 1;
+              size_t param_start = param_end;
+              while (paren_count > 0 && param_start > kernel_start) {
+                param_start--;
+                if (source[param_start] == ')') paren_count++;
+                if (source[param_start] == '(') paren_count--;
+              }
+              if (paren_count == 0) {
+                // Add debug pointer parameter
+                source = source.substr(0, param_end) + ", int* dbgPtr" + source.substr(param_end);
+              }
+            }
+          }
+        }
+      }
+
       ss << source << "\n\n";
     } else {
       // Generate kernel declaration with empty body
@@ -217,10 +245,24 @@ private:
 
     ss << "int main() {\n"
        << "    hipError_t err;\n\n";
+
+    if (debug_mode) {
+      // Count number of lines in kernel source
+      size_t line_count = std::count(kernel.getModuleSource().begin(), kernel.getModuleSource().end(), '\n') + 1;
+      kernel_lines_ = line_count;
+      
+      ss << "    // Allocate debug pointer arrays\n";
+      ss << "    int* dbgPtr_h = (int*)calloc(" << line_count << ", sizeof(int));\n";
+      ss << "    if (!dbgPtr_h) { std::cerr << \"Failed to allocate host debug memory\\n\"; return 1; }\n";
+      ss << "    int* dbgPtr_d;\n";
+      ss << "    CHECK_HIP(hipMalloc((void**)&dbgPtr_d, " << line_count << " * sizeof(int)));\n";
+      ss << "    CHECK_HIP(hipMemset(dbgPtr_d, 0, " << line_count << " * sizeof(int)));\n\n";
+    }
   }
 
   void generateDeclarations(std::stringstream &ss,
-                            KernelExecution *op) {
+                            KernelExecution *op,
+                            bool debug_mode) {
     if (!op->isKernel()) {
       throw std::runtime_error("Operation is not a kernel execution");
     }
@@ -245,11 +287,13 @@ private:
         declared_vars_.insert(var_name);
       }
     }
+    // Remove debug pointer declarations since they're already declared in generateHeader
     ss << "\n";
   }
 
   void generateInitialization(std::stringstream &ss,
-                              KernelExecution *op) {
+                              KernelExecution *op,
+                              bool debug_mode) {
     if (!op->isKernel()) {
         throw std::runtime_error("Operation is not a kernel execution");
     }
@@ -341,7 +385,7 @@ private:
 
   void generateKernelLaunches(std::stringstream &ss,
                               KernelExecution *op,
-                              bool debug_mode = false) {
+                              bool debug_mode) {
     const Kernel &kernel = kernel_manager_.getKernelByName(op->kernel_name);
 
     ss << "    // Launch kernel " << kernel.getName() << "\n";
@@ -363,6 +407,11 @@ private:
         std::string var_name = "arg_" + std::to_string(i) + "_" + op->kernel_name;
         ss << (args[i].isPointer() ? var_name + "_d" : var_name);
     }
+
+    if (debug_mode) {
+      ss << ", dbgPtr_d";
+    }
+
     ss << ");\n";
     ss << "    CHECK_HIP(hipDeviceSynchronize());\n"
        << "    CHECK_HIP(hipGetLastError());\n\n";
@@ -427,7 +476,7 @@ private:
     }
   }
 
-  void generateCleanup(std::stringstream &ss) {
+  void generateCleanup(std::stringstream &ss, bool debug_mode) {
     ss << "\n    // Cleanup\n";
     ss << "\n    std::cout << \"\\nSUMMARY OF CHANGES:\\n\";\n";
     ss << "    bool any_changes = false;\n";
@@ -449,6 +498,17 @@ private:
         } else if (var.find("_h") != std::string::npos) {
             ss << "    if (" << var << ") free((void*)" << var << ");\n";
         }
+    }
+
+    if (debug_mode) {
+      ss << "    // Copy back and print debug information\n";
+      ss << "    CHECK_HIP(hipMemcpy(dbgPtr_h, dbgPtr_d, " << kernel_lines_ << " * sizeof(int), hipMemcpyDeviceToHost));\n";
+      ss << "    std::cout << \"\\nDEBUG POINTER VALUES:\\n\";\n";
+      ss << "    for (size_t i = 0; i < " << kernel_lines_ << "; i++) {\n";
+      ss << "       std::cout << \"  Line \" << i << \": executed \" << dbgPtr_h[i] << \" times\\n\";\n";
+      ss << "    }\n";
+      ss << "    if (dbgPtr_h) free(dbgPtr_h);\n";
+      ss << "    if (dbgPtr_d) CHECK_HIP(hipFree(dbgPtr_d));\n";
     }
 
     ss << "\n    return 0;\n"
