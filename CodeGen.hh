@@ -19,7 +19,8 @@ public:
   Tracer tracer;
   std::string trace_file_path_;
   CodeGen(const std::string &trace_file_path)
-      : tracer(trace_file_path), operation_index_(-1), trace_file_path_(trace_file_path), kernel_manager_(tracer.getKernelManager()), kernel_lines_(0) {
+      : tracer(trace_file_path), operation_index_(-1), trace_file_path_(trace_file_path), 
+        kernel_manager_(tracer.getKernelManager()), kernel_lines_(0), line_number_(0) {
         tracer.setSerializeTrace(false);
       }
   std::string generateReproducer(std::string kernel_name, int instance_index, bool debug_mode = false) {
@@ -161,6 +162,7 @@ private:
   std::unordered_set<std::string> declared_vars_;
   int operation_index_;
   size_t kernel_lines_;  // Number of lines in the kernel source for debug mode
+  size_t line_number_;   // Number of debug statements inserted
 
   // Split kernel body into statements, properly handling strings and comments
   std::vector<std::string> splitStatements(const std::string& body) {
@@ -343,8 +345,8 @@ private:
                 var_name.erase(0, var_name.find_first_not_of(" \t"));
                 var_name.erase(var_name.find_last_not_of(" \t") + 1);
                 
-                modified_body << "    dbgPtr[" << line_number << "] = " << var_name << ";\n\n";
-                line_number++;
+                modified_body << "    dbgPtr[" << line_number_ << "] = " << var_name << ";\n\n";
+                line_number_++;
               }
             }
             
@@ -647,7 +649,7 @@ private:
       ss << "    // Copy back and print debug information\n";
       ss << "    CHECK_HIP(hipMemcpy(dbgPtr_h, dbgPtr_d, " << kernel_lines_ << " * sizeof(float), hipMemcpyDeviceToHost));\n";
       ss << "    std::cout << \"\\nDEBUG POINTER VALUES:\\n\";\n";
-      ss << "    for (size_t i = 0; i < " << kernel_lines_ << "; i++) {\n";
+      ss << "    for (size_t i = 0; i < " << line_number_ << "; i++) {\n";
       ss << "       std::cout << \"  Line \" << i << \": value = \" << dbgPtr_h[i] << \"\\n\";\n";
       ss << "    }\n";
       ss << "    if (dbgPtr_h) free(dbgPtr_h);\n";
