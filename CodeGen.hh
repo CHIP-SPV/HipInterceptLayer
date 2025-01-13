@@ -162,6 +162,104 @@ private:
   int operation_index_;
   size_t kernel_lines_;  // Number of lines in the kernel source for debug mode
 
+  // Split kernel body into statements, properly handling strings and comments
+  std::vector<std::string> splitStatements(const std::string& body) {
+    std::vector<std::string> statements;
+    size_t start = 0;
+    bool in_string = false;
+    bool in_comment = false;
+    int brace_count = 0;
+    int paren_count = 0;
+    bool in_loop = false;  // Track if we're inside a loop statement
+    
+    for (size_t i = 0; i < body.length(); i++) {
+      // Check if this might be a loop or control statement
+      if (i == start || std::isspace(body[i-1])) {
+        std::string rest = body.substr(i);
+        if (rest.find("for") == 0 || rest.find("while") == 0 || rest.find("if") == 0) {
+          in_loop = true;
+        }
+      }
+
+      if (!in_comment && body[i] == '"' && (i == 0 || body[i-1] != '\\')) {
+        in_string = !in_string;
+      }
+      else if (!in_string && !in_comment && i < body.length() - 1 && body[i] == '/' && body[i+1] == '/') {
+        in_comment = true;
+      }
+      else if (in_comment && body[i] == '\n') {
+        in_comment = false;
+      }
+      else if (!in_string && !in_comment && body[i] == '(') {
+        paren_count++;
+      }
+      else if (!in_string && !in_comment && body[i] == ')') {
+        paren_count--;
+        if (paren_count == 0 && in_loop) {
+          // We've found the end of a loop condition
+          if (i + 1 < body.length() && body[i + 1] == '{') {
+            // Loop with a block - keep going until we find the matching '}'
+            continue;
+          } else {
+            // Loop with a single statement - keep going until we find ';'
+            continue;
+          }
+        }
+      }
+      else if (!in_string && !in_comment && body[i] == '{') {
+        brace_count++;
+      }
+      else if (!in_string && !in_comment && body[i] == '}') {
+        brace_count--;
+        if (brace_count == 0 && in_loop) {
+          // We've found the end of a loop block
+          // Find the next newline to include it in the statement
+          size_t next_newline = i + 1;
+          while (next_newline < body.length() && body[next_newline] != '\n') {
+            next_newline++;
+          }
+          std::string stmt = body.substr(start, next_newline - start + 1);
+          if (!stmt.empty()) {
+            statements.push_back(stmt);
+          }
+          start = next_newline + 1;
+          in_loop = false;
+          i = next_newline;
+          continue;
+        }
+      }
+      else if (!in_string && !in_comment && body[i] == ';' && brace_count == 0 && paren_count == 0) {
+        // Only split on semicolon if we're not inside a brace block or parentheses
+        // Find the next newline to include it in the statement
+        size_t next_newline = i + 1;
+        while (next_newline < body.length() && body[next_newline] != '\n') {
+          next_newline++;
+        }
+        std::string stmt = body.substr(start, next_newline - start + 1);
+        if (!stmt.empty()) {
+          if (in_loop) {
+            // If we're in a loop, keep accumulating until we get the full loop
+            continue;
+          }
+          statements.push_back(stmt);
+        }
+        if (!in_loop) {
+          start = next_newline + 1;
+          i = next_newline;
+        }
+      }
+    }
+    
+    // Handle any remaining text
+    if (start < body.length()) {
+      std::string stmt = body.substr(start);
+      if (!stmt.empty()) {
+        statements.push_back(stmt);
+      }
+    }
+    return statements;
+  }
+
   void generateHeader(std::stringstream &ss,
                       KernelExecution *op,
                       bool debug_mode = false) {
@@ -185,6 +283,11 @@ private:
       std::regex standalone_extern_c(R"(extern\s*"C"\s*)");
       source = std::regex_replace(source, standalone_extern_c, "");
 
+      // remove all empty lines from the source
+      // source = std::regex_replace(source, std::regex("\\n\s+?\\n"), "");
+
+      std::cout << "Source: " << source << std::endl;
+
       if (debug_mode) {
         // Find where kernel starts, then first { from there and move backwards to find the parameter list end
         size_t kernel_start = source.find(kernel.getName());
@@ -204,9 +307,49 @@ private:
               }
               if (paren_count == 0) {
                 // Add debug pointer parameter
-                source = source.substr(0, param_end) + ", int* dbgPtr" + source.substr(param_end);
+                source = source.substr(0, param_end) + ", float* dbgPtr" + source.substr(param_end);
               }
             }
+          }
+          
+          // Now inject debug statements after each line in the kernel body
+          size_t body_start = first_brace + 1 + sizeof(", float* dbgPtr");
+          size_t body_end = source.find_last_of('}');
+          if (body_start != std::string::npos && body_end != std::string::npos) {
+            std::string body = source.substr(body_start, body_end - body_start);
+            std::stringstream modified_body;
+            size_t line_number = 0;
+
+            // Split the body into statements using splitStatements()
+            auto statements = splitStatements(body);
+            
+            // Process each statement
+            for (const auto& stmt : statements) {
+              std::cout << "Processing statement: " << stmt << std::endl;
+              // Check if this is an assignment statement
+              std::regex assign_pattern(R"((\w+(?:\s*\[[^\]]*\])?)\s*=\s*([^;]+))");
+              std::smatch matches;
+              
+              // First add the original statement
+              modified_body << "    " << stmt << "\n";
+              
+              // Only add debug statement if this is a regular assignment (not in a loop/control statement)
+              if (std::regex_search(stmt, matches, assign_pattern) &&
+                  stmt.find("for") == std::string::npos && 
+                  stmt.find("while") == std::string::npos &&
+                  stmt.find("if") == std::string::npos) {
+                std::string var_name = matches[1].str();
+                // Trim the variable name
+                var_name.erase(0, var_name.find_first_not_of(" \t"));
+                var_name.erase(var_name.find_last_not_of(" \t") + 1);
+                
+                modified_body << "    dbgPtr[" << line_number << "] = " << var_name << ";\n\n";
+                line_number++;
+              }
+            }
+            
+            // Replace the kernel body with the modified one
+            source = source.substr(0, body_start) + "\n" + modified_body.str() + source.substr(body_end);
           }
         }
       }
@@ -252,11 +395,11 @@ private:
       kernel_lines_ = line_count;
       
       ss << "    // Allocate debug pointer arrays\n";
-      ss << "    int* dbgPtr_h = (int*)calloc(" << line_count << ", sizeof(int));\n";
+      ss << "    float* dbgPtr_h = (float*)calloc(" << line_count << ", sizeof(float));\n";
       ss << "    if (!dbgPtr_h) { std::cerr << \"Failed to allocate host debug memory\\n\"; return 1; }\n";
-      ss << "    int* dbgPtr_d;\n";
-      ss << "    CHECK_HIP(hipMalloc((void**)&dbgPtr_d, " << line_count << " * sizeof(int)));\n";
-      ss << "    CHECK_HIP(hipMemset(dbgPtr_d, 0, " << line_count << " * sizeof(int)));\n\n";
+      ss << "    float* dbgPtr_d;\n";
+      ss << "    CHECK_HIP(hipMalloc((void**)&dbgPtr_d, " << line_count << " * sizeof(float)));\n";
+      ss << "    CHECK_HIP(hipMemset(dbgPtr_d, 0, " << line_count << " * sizeof(float)));\n\n";
     }
   }
 
@@ -502,10 +645,10 @@ private:
 
     if (debug_mode) {
       ss << "    // Copy back and print debug information\n";
-      ss << "    CHECK_HIP(hipMemcpy(dbgPtr_h, dbgPtr_d, " << kernel_lines_ << " * sizeof(int), hipMemcpyDeviceToHost));\n";
+      ss << "    CHECK_HIP(hipMemcpy(dbgPtr_h, dbgPtr_d, " << kernel_lines_ << " * sizeof(float), hipMemcpyDeviceToHost));\n";
       ss << "    std::cout << \"\\nDEBUG POINTER VALUES:\\n\";\n";
       ss << "    for (size_t i = 0; i < " << kernel_lines_ << "; i++) {\n";
-      ss << "       std::cout << \"  Line \" << i << \": executed \" << dbgPtr_h[i] << \" times\\n\";\n";
+      ss << "       std::cout << \"  Line \" << i << \": value = \" << dbgPtr_h[i] << \"\\n\";\n";
       ss << "    }\n";
       ss << "    if (dbgPtr_h) free(dbgPtr_h);\n";
       ss << "    if (dbgPtr_d) CHECK_HIP(hipFree(dbgPtr_d));\n";
