@@ -10,11 +10,6 @@
 #include <string>
 
 namespace {
-    const char* RED = "\033[1;31m";
-    const char* YELLOW = "\033[1;33m";
-    const char* CYAN = "\033[1;36m";
-    const char* RESET = "\033[0m";
-
     void printUsage(const char* program) {
         std::cerr << "Usage:\n"
                   << "  " << program << " <trace1> [trace2]     Compare two traces\n"
@@ -120,17 +115,45 @@ int main(int argc, char* argv[]) {
             std::cerr << "Number of operations does not match: " 
                       << tracer1.trace_.operations.size() << " vs " 
                       << tracer2.trace_.operations.size() << std::endl;
-            return 1;
         }
 
         bool all_match = true;
-        for (size_t i = 0; i < tracer1.trace_.operations.size(); i++) {
+        size_t min_ops = std::min(tracer1.trace_.operations.size(), tracer2.trace_.operations.size());
+        
+        for (size_t i = 0; i < min_ops; i++) {
             const auto& op1 = tracer1.trace_.operations[i];
             const auto& op2 = tracer2.trace_.operations[i];
             
+            std::cout << "\n=== Comparing Operation " << i << " ===\n";
+            if (op1->type == OperationType::KERNEL) {
+                const auto* k1 = dynamic_cast<const KernelExecution*>(op1.get());
+                const auto* k2 = dynamic_cast<const KernelExecution*>(op2.get());
+                std::cout << "Type: Kernel\n";
+                if (k1 && k2) {
+                    std::cout << "Kernel 1: " << k1->kernel_name 
+                             << " Grid(" << k1->grid_dim.x << "," << k1->grid_dim.y << "," << k1->grid_dim.z << ")"
+                             << " Block(" << k1->block_dim.x << "," << k1->block_dim.y << "," << k1->block_dim.z << ")\n";
+                    std::cout << "Kernel 2: " << k2->kernel_name 
+                             << " Grid(" << k2->grid_dim.x << "," << k2->grid_dim.y << "," << k2->grid_dim.z << ")"
+                             << " Block(" << k2->block_dim.x << "," << k2->block_dim.y << "," << k2->block_dim.z << ")\n";
+                }
+            } else if (op1->type == OperationType::MEMORY) {
+                const auto* m1 = dynamic_cast<const MemoryOperation*>(op1.get());
+                const auto* m2 = dynamic_cast<const MemoryOperation*>(op2.get());
+                std::cout << "Type: Memory Operation\n";
+                if (m1 && m2) {
+                    std::cout << "Memory Op 1: " << Comparator::memoryOpTypeToString(m1->type) 
+                             << " Size: " << m1->size << " Kind: " << ::memcpyKindToString(m1->kind) << "\n";
+                    std::cout << "Memory Op 2: " << Comparator::memoryOpTypeToString(m2->type)
+                             << " Size: " << m2->size << " Kind: " << ::memcpyKindToString(m2->kind) << "\n";
+                }
+            }
+            
             if (!Comparator::compare(*op1, *op2)) {
-                std::cerr << "Operation " << i << " does not match" << std::endl;
+                std::cerr << Comparator::RED << "Operation " << i << " does not match" << Comparator::RESET << std::endl;
                 all_match = false;
+            } else {
+                std::cout << Comparator::CYAN << "Operation " << i << " matches" << Comparator::RESET << std::endl;
             }
         }
         
