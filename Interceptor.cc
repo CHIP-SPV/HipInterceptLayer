@@ -280,12 +280,28 @@ static hipError_t hipLaunchKernel_impl(const void *function_address,
     // Launch kernel
     hipError_t result = get_real_hipLaunchKernel()(function_address, numBlocks, 
                                                   dimBlocks, args, sharedMemBytes, stream);
-    (void)get_real_hipDeviceSynchronize()();
     
-    // Capture post-execution state
+    // Check for launch errors
+    if (result != hipSuccess) {
+        std::cerr << "Kernel launch failed with error: " << hipGetErrorString(result) << std::endl;
+        // Record the failed execution and finalize trace
+        Tracer::instance().recordKernelLaunch(exec);
+        Tracer::instance().finalizeTrace();
+        return result;
+    }
+
+    // Synchronize and check for execution errors
+    hipError_t sync_result = get_real_hipDeviceSynchronize()();
+    if (sync_result != hipSuccess) {
+        std::cerr << "Kernel execution failed with error: " << hipGetErrorString(sync_result) << std::endl;
+        // Record the failed execution and finalize trace
+        Tracer::instance().recordKernelLaunch(exec);
+        Tracer::instance().finalizeTrace();
+        return sync_result;
+    }
+    
+    // Capture post-execution state only if execution was successful
     capturePostState(exec, kernel, args);
-    
-    // Record kernel execution using Tracer
     Tracer::instance().recordKernelLaunch(exec);
     
     return result;
@@ -653,11 +669,28 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                                         blockDimX, blockDimY, blockDimZ,
                                                         sharedMemBytes, stream,
                                                         kernelParams, extra);
-    (void)get_real_hipDeviceSynchronize()();
     
-    // Capture post-execution state
-    capturePostState(exec, kernel, kernelParams);
+    // Check for launch errors
+    if (result != hipSuccess) {
+        std::cerr << "Kernel launch failed with error: " << hipGetErrorString(result) << std::endl;
+        // Record the failed execution and finalize trace
+        Tracer::instance().recordKernelLaunch(exec);
+        Tracer::instance().finalizeTrace();
+        return result;
+    }
 
+    // Synchronize and check for execution errors
+    hipError_t sync_result = get_real_hipDeviceSynchronize()();
+    if (sync_result != hipSuccess) {
+        std::cerr << "Kernel execution failed with error: " << hipGetErrorString(sync_result) << std::endl;
+        // Record the failed execution and finalize trace
+        Tracer::instance().recordKernelLaunch(exec);
+        Tracer::instance().finalizeTrace();
+        return sync_result;
+    }
+    
+    // Capture post-execution state only if execution was successful
+    capturePostState(exec, kernel, kernelParams);
     Tracer::instance().recordKernelLaunch(exec);
     return result;
 }

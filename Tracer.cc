@@ -37,35 +37,75 @@ void Tracer::initializeTraceFile() {
 void Tracer::finalizeTrace(std::string final_trace_path) {
     if (!initialized_) return;
 
-    std::cout << "Finalizing trace with " << kernel_manager_.getNumKernels() << " kernels" << std::endl;
+    std::cout << "Finalizing trace with " << trace_.operations.size() << " kernels" << std::endl;
+    
+    // If no final trace path provided, use the original file path
+    if (final_trace_path.empty()) {
+        final_trace_path = file_path;
+    }
+
+    if (final_trace_path.empty()) {
+        std::cerr << "Failed to finalize trace: no valid trace file path provided" << std::endl;
+        return;
+    }
+
+    // Create directory if it doesn't exist
+    std::filesystem::path trace_dir = std::filesystem::path(final_trace_path).parent_path();
+    if (!trace_dir.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(trace_dir, ec);
+        if (ec) {
+            std::cerr << "Failed to create trace directory " << trace_dir << ": " << ec.message() << std::endl;
+            return;
+        }
+    }
     
     // Create a new file for the final trace
     std::ofstream final_trace(final_trace_path, std::ios::binary);
     if (!final_trace) {
-        std::cerr << "Failed to create final trace file: " << final_trace_path << std::endl;
+        std::cerr << "Failed to create final trace file " << final_trace_path << ": " << std::strerror(errno) << std::endl;
         return;
     }
     
-    // Write kernel manager data
-    kernel_manager_.serialize(final_trace);
+    try {
+        // Write kernel manager data
+        kernel_manager_.serialize(final_trace);
 
-    // Write number of operations
-    size_t num_operations = trace_.operations.size();
-    final_trace.write(reinterpret_cast<const char*>(&num_operations), sizeof(num_operations));
-    std::cout << "Wrote " << num_operations << " operations" << std::endl;
+        // Write number of operations
+        size_t num_operations = trace_.operations.size();
+        final_trace.write(reinterpret_cast<const char*>(&num_operations), sizeof(num_operations));
+        std::cout << "Writing " << num_operations << " operations" << std::endl;
 
-    // Write all operations
-    for (const auto& op : trace_.operations) {
-        op->serialize(final_trace);
+        // Write all operations
+        for (const auto& op : trace_.operations) {
+            if (!op) {
+                std::cerr << "Warning: Skipping null operation" << std::endl;
+                continue;
+            }
+            op->serialize(final_trace);
+            if (!final_trace) {
+                throw std::runtime_error("Failed to write operation to trace file");
+            }
+        }
+        
+        // Close files
+        final_trace.close();
+        trace_file_.close();
+        
+        std::cout << "\n\nTrace finalized successfully with " << trace_.operations.size() 
+                  << " operations saved to " << final_trace_path << std::endl;
+        initialized_ = false;
+    } catch (const std::exception& e) {
+        std::cerr << "Error while writing trace file: " << e.what() << std::endl;
+        final_trace.close();
+        trace_file_.close();
+        // Try to remove the incomplete file
+        std::error_code ec;
+        std::filesystem::remove(final_trace_path, ec);
+        if (ec) {
+            std::cerr << "Warning: Failed to remove incomplete trace file: " << ec.message() << std::endl;
+        }
     }
-    
-    // Close files
-    final_trace.close();
-    trace_file_.close();
-    
-    std::cout << "\n\nTrace finalized successfully with # of operations: " << trace_.operations.size() << " saved to " << final_trace_path << std::endl;
-    // kernel_manager_ << std::cout;
-    initialized_ = false;
 }
 
 void Tracer::recordKernelLaunch(const KernelExecution& exec) {
