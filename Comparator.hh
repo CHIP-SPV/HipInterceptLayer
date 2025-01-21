@@ -10,6 +10,7 @@
 class Comparator {
 public:
     static constexpr const char* RED = "\033[1;31m";
+    static constexpr const char* GREEN = "\033[1;32m";
     static constexpr const char* YELLOW = "\033[1;33m";
     static constexpr const char* CYAN = "\033[1;36m";
     static constexpr const char* RESET = "\033[0m";
@@ -74,19 +75,24 @@ private:
             return false;
         }
 
-        if (!compareArgStates(k1.pre_args, k2.pre_args)) {
-            std::cerr << "Pre-execution arguments do not match for kernel " << k1.kernel_name << std::endl;
-            printArgStateDifference(k1.pre_args, k2.pre_args);
-            return false;
+        bool pre_match = compareArgStates(k1.pre_args, k2.pre_args);
+        bool post_match = compareArgStates(k1.post_args, k2.post_args);
+
+        // Print status summary first
+        std::cerr << "pre-state:  " << (pre_match ? (GREEN + std::string("match")) : (RED + std::string("mismatch"))) << RESET << std::endl;
+        std::cerr << "post-state: " << (post_match ? (GREEN + std::string("match")) : (RED + std::string("mismatch"))) << RESET << std::endl;
+
+        // Then print details for mismatches
+        if (!pre_match) {
+            std::cerr << "\nPre-state differences:" << std::endl;
+            printArgStateDifference(k1.pre_args, k2.pre_args, "pre-execution");
+        }
+        if (!post_match) {
+            std::cerr << "\nPost-state differences:" << std::endl;
+            printArgStateDifference(k1.post_args, k2.post_args, "post-execution");
         }
 
-        if (!compareArgStates(k1.post_args, k2.post_args)) {
-            std::cerr << "Post-execution arguments do not match for kernel " << k1.kernel_name << std::endl;
-            printArgStateDifference(k1.post_args, k2.post_args);
-            return false;
-        }
-
-        return true;
+        return pre_match && post_match;
     }
 
     static bool compareMemoryOperations(const MemoryOperation& m1, const MemoryOperation& m2) {
@@ -95,30 +101,36 @@ private:
             return false;
         }
 
-        if (!compareArgStates(m1.pre_args, m2.pre_args)) {
-            std::cerr << "Pre-operation arguments do not match" << std::endl;
-            printArgStateDifference(m1.pre_args, m2.pre_args);
-            return false;
+        bool pre_match = compareArgStates(m1.pre_args, m2.pre_args);
+        bool post_match = compareArgStates(m1.post_args, m2.post_args);
+
+        // Print status summary first
+        std::cerr << "pre-state:  " << (pre_match ? (GREEN + std::string("match")) : (RED + std::string("mismatch"))) << RESET << std::endl;
+        std::cerr << "post-state: " << (post_match ? (GREEN + std::string("match")) : (RED + std::string("mismatch"))) << RESET << std::endl;
+
+        // Then print details for mismatches
+        if (!pre_match) {
+            std::cerr << "\nPre-state differences:" << std::endl;
+            printArgStateDifference(m1.pre_args, m2.pre_args, "pre-operation");
+        }
+        if (!post_match) {
+            std::cerr << "\nPost-state differences:" << std::endl;
+            printArgStateDifference(m1.post_args, m2.post_args, "post-operation");
         }
 
-        if (!compareArgStates(m1.post_args, m2.post_args)) {
-            std::cerr << "Post-operation arguments do not match" << std::endl;
-            printArgStateDifference(m1.post_args, m2.post_args);
-            return false;
-        }
-
-        return true;
+        return pre_match && post_match;
     }
 
     static void printArgStateDifference(const std::vector<ArgState>& args1, 
-                                      const std::vector<ArgState>& args2) {
-        std::cerr << RED << "Arguments differ:" << RESET << std::endl;
+                                      const std::vector<ArgState>& args2,
+                                      const char* state_context = "unknown") {
+        std::cerr << RED << "Arguments differ (" << state_context << " state):" << RESET << std::endl;
         std::cerr << "First set has " << args1.size() << " arguments" << std::endl;
         std::cerr << "Second set has " << args2.size() << " arguments" << std::endl;
 
         // If one set is empty, show what's in the other set
         if (args1.empty() && !args2.empty()) {
-            std::cerr << "\nSecond set arguments:" << std::endl;
+            std::cerr << "\nSecond set arguments (" << state_context << " state):" << std::endl;
             for (size_t i = 0; i < args2.size(); ++i) {
                 const auto& arg = args2[i];
                 std::cerr << "  Arg " << i << ": type_size=" << arg.data_type_size 
@@ -153,6 +165,19 @@ private:
                 std::cerr << "  Second: type_size=" << arg2.data_type_size 
                    << ", array_size=" << arg2.array_size 
                    << ", total_size=" << arg2.total_size() << std::endl;
+                
+                // Calculate and print checksums
+                uint64_t checksum1 = 0;
+                uint64_t checksum2 = 0;
+                for (size_t j = 0; j < arg1.data.size(); ++j) {
+                    checksum1 += static_cast<unsigned char>(arg1.data[j]);
+                }
+                for (size_t j = 0; j < arg2.data.size(); ++j) {
+                    checksum2 += static_cast<unsigned char>(arg2.data[j]);
+                }
+                std::cerr << "  Checksums:" << std::endl;
+                std::cerr << "    First:  " << checksum1 << std::endl;
+                std::cerr << "    Second: " << checksum2 << std::endl;
                 
                 // Print first 3 values as floats if data exists
                 if (!arg1.data.empty() && !arg2.data.empty()) {
