@@ -419,97 +419,102 @@ double z = 2.718;
 )";
   EXPECT_EQ(typeSub(source3), expected3);
 
-//   // Test case 4: Chained typedef substitution
-//   std::string source4 = R"(
-// typedef int BaseType;
-// typedef BaseType IntermediateType;
-// typedef IntermediateType FinalType;
-// FinalType value = 42;
-// )";
-//   std::string expected4 = R"(
+  // Test case 4: Chained typedef substitution
+  std::string source4 = R"(
+typedef int BaseType;
+typedef BaseType IntermediateType;
+typedef IntermediateType FinalType;
+FinalType value = 42;
+)";
+  std::string expected4 = R"(
+typedef int BaseType;
+typedef BaseType IntermediateType;
+typedef IntermediateType FinalType;
+int value = 42;
+)";
+  EXPECT_EQ(typeSub(source4), expected4);
 
+  // Test case 5: Complex type with multiple substitutions
+  std::string source5 = R"(
+typedef unsigned int uint;
+typedef uint* uint_ptr;
+using IntPtr = int*;
+#define PTR_TYPE IntPtr
+uint_ptr x = nullptr;
+PTR_TYPE y = nullptr;
+)";
+  std::string expected5 = R"(
+typedef unsigned int uint;
+typedef uint* uint_ptr;
+using IntPtr = int*;
+#define PTR_TYPE IntPtr
+unsigned int* x = nullptr;
+int* y = nullptr;
+)";
+  EXPECT_EQ(typeSub(source5), expected5);
 
+  // test for proper type substitution when vector types are used
+  std::string source6 = R"(
+typedef float4 MyFloat4;
 
-// int value = 42;
-// )";
-//   EXPECT_EQ(typeSub(source4), expected4);
+inline __device__ int3 operator*(int3 a, int b) {
+    return make_int3(a.x*b, a.y*b, a.z*b);
+}
+MyFloat4 x = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
+)";
+  std::string expected6 = R"(
+typedef float4 MyFloat4;
 
-//   // Test case 5: Complex type with multiple substitutions
-//   std::string source5 = R"(
-// typedef unsigned int uint;
-// typedef uint* uint_ptr;
-// using IntPtr = int*;
-// #define PTR_TYPE IntPtr
-// uint_ptr x = nullptr;
-// PTR_TYPE y = nullptr;
-// )";
-//   std::string expected5 = R"(
+inline __device__ int3 operator*(int3 a, int b) {
+    return make_int3(a.x*b, a.y*b, a.z*b);
+}
+float4 x = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
+)";
+  EXPECT_EQ(typeSub(source6), expected6);
 
+  // test for struct parsing
+  std::string source7 = R"(
+    typedef float real;
+    #define USE_HIP
 
+    #if defined(USE_HIP)
+        #define ALIGN alignas(16)
+    #else
+        #define ALIGN
+    #endif
 
-// unsigned int* x = nullptr;
-// int* y = nullptr;
-// )";
-//   EXPECT_EQ(typeSub(source5), expected5);
+typedef struct ALIGN {
+    real x, y, z;
+    real q;
+    float radius, scaledRadius;
+    real bornSum;
+} AtomData1;
 
-//   // test for proper type substitution when vector types are used
-//   std::string source6 = R"(
-// typedef float4 MyFloat4;
+AtomData1 x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
 
-// inline __device__ int3 operator*(int3 a, int b) {
-//     return make_int3(a.x*b, a.y*b, a.z*b);
-// }
-// MyFloat4 x = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
-// )";
-//   std::string expected6 = R"(
+x.x = 1.0f;
+)";
 
-// float4 x = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
-// )";
-//   EXPECT_EQ(typeSub(source6), expected6);
+  std::string expected7 = R"(
+    typedef float real;
+    #define USE_HIP
 
-//   // test for struct parsing
+    #if defined(USE_HIP)
+        #define ALIGN alignas(16)
+    #else
+        #define ALIGN
+    #endif
 
-//   std::string source7 = R"(
-//     typedef float real;
-//     #define USE_HIP
+typedef struct alignas(16) {
+    real x, y, z;
+    real q;
+    float radius, scaledRadius;
+    real bornSum;
+} AtomData1;
 
-//     #if defined(USE_HIP)
-//         #define ALIGN alignas(16)
-//     #else
-//         #define ALIGN
-//     #endif
+AtomData1 x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
 
-// typedef struct ALIGN {
-//     real x, y, z;
-//     real q;
-//     float radius, scaledRadius;
-//     real bornSum;
-// } AtomData1;
-
-// AtomData1 x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-
-// x.x = 1.0f;
-// )";
-
-//   std::string expected7 = R"(
-//     #define USE_HIP
-
-//     #if defined(USE_HIP)
-//         #define ALIGN alignas(16)
-//     #else
-//         #define ALIGN
-//     #endif
-
-// typedef struct ALIGN {
-//     real x, y, z;
-//     real q;
-//     float radius, scaledRadius;
-//     real bornSum;
-// } AtomData1;
-
-// AtomData1 x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-
-// x.x = 1.0f;
-// )";
-//   EXPECT_EQ(typeSub(source7), expected7);
+x.x = 1.0f;
+)";
+  EXPECT_EQ(typeSub(source7), expected7);
 }
