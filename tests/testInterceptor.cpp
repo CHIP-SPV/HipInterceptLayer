@@ -1,4 +1,5 @@
 #include "../Interceptor.hh"
+#include "../TypeMap.hh"
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 #include <hip/hip_vector_types.h>
@@ -384,137 +385,255 @@ TEST_F(InterceptorTest, CompareComputeNonbondedReproTraceWithSource) {
   }
 }
 
-// Test typeSub function for type substitutions
-TEST_F(InterceptorTest, TypeSubstitution) {
-  // Test case 1: Basic typedef substitution
-  std::string source1 = R"(
-typedef int MyInt;
-MyInt x = 5;
-)";
-  std::string expected1 = R"(
-typedef int MyInt;
-int x = 5;
-)";
-  EXPECT_EQ(typeSub(source1), expected1);
+// Test suite for type size mapping functionality
+class TypeMapTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // Setup code if needed
+    }
+};
 
-  // Test case 2: Using declaration substitution
-  std::string source2 = R"(
-using MyFloat = float;
-MyFloat y = 3.14;
-)";
-  std::string expected2 = R"(
-using MyFloat = float;
-float y = 3.14;
-)";
-  EXPECT_EQ(typeSub(source2), expected2);
-
-  // Test case 3: #define substitution
-  std::string source3 = R"(
-#define CUSTOM_TYPE double
-CUSTOM_TYPE z = 2.718;
-)";
-  std::string expected3 = R"(
-#define CUSTOM_TYPE double
-double z = 2.718;
-)";
-  EXPECT_EQ(typeSub(source3), expected3);
-
-  // Test case 4: Chained typedef substitution
-  std::string source4 = R"(
-typedef int BaseType;
-typedef BaseType IntermediateType;
-typedef IntermediateType FinalType;
-FinalType value = 42;
-)";
-  std::string expected4 = R"(
-typedef int BaseType;
-typedef BaseType IntermediateType;
-typedef IntermediateType FinalType;
-int value = 42;
-)";
-  EXPECT_EQ(typeSub(source4), expected4);
-
-  // Test case 5: Complex type with multiple substitutions
-  std::string source5 = R"(
-typedef unsigned int uint;
-typedef uint* uint_ptr;
-using IntPtr = int*;
-#define PTR_TYPE IntPtr
-uint_ptr x = nullptr;
-PTR_TYPE y = nullptr;
-)";
-  std::string expected5 = R"(
-typedef unsigned int uint;
-typedef uint* uint_ptr;
-using IntPtr = int*;
-#define PTR_TYPE IntPtr
-unsigned int* x = nullptr;
-int* y = nullptr;
-)";
-  EXPECT_EQ(typeSub(source5), expected5);
-
-  // test for proper type substitution when vector types are used
-  std::string source6 = R"(
-typedef float4 MyFloat4;
-
-inline __device__ int3 operator*(int3 a, int b) {
-    return make_int3(a.x*b, a.y*b, a.z*b);
+TEST_F(TypeMapTest, BasicTypeMapping) {
+    TypeMap typeMap;
+    
+    // Register some basic types
+    typeMap.registerType("MyInt", sizeof(int));
+    typeMap.registerType("MyFloat", sizeof(float));
+    
+    EXPECT_EQ(typeMap.getTypeSize("MyInt"), sizeof(int));
+    EXPECT_EQ(typeMap.getTypeSize("MyFloat"), sizeof(float));
+    EXPECT_EQ(typeMap.getTypeSize("int"), sizeof(int));  // built-in types should work too
+    EXPECT_EQ(typeMap.getTypeSize("float"), sizeof(float));
 }
-MyFloat4 x = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
-)";
-  std::string expected6 = R"(
-typedef float4 MyFloat4;
 
-inline __device__ int3 operator*(int3 a, int b) {
-    return make_int3(a.x*b, a.y*b, a.z*b);
+TEST_F(TypeMapTest, StructTypeMapping) {
+    TypeMap typeMap;
+    
+    // Define a test struct
+    struct alignas(16) TestStruct {
+        float x, y, z;
+        int flags;
+        double value;
+    };
+
+    typeMap.registerType("TestStruct", sizeof(TestStruct));
+    EXPECT_EQ(typeMap.getTypeSize("TestStruct"), sizeof(TestStruct));
+    EXPECT_EQ(typeMap.getAlignment("TestStruct"), 16);
 }
-float4 x = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
-)";
-  EXPECT_EQ(typeSub(source6), expected6);
 
-  // test for struct parsing
-  std::string source7 = R"(
-    typedef float real;
-    #define USE_HIP
-
-    #if defined(USE_HIP)
-        #define ALIGN alignas(16)
-    #else
-        #define ALIGN
-    #endif
-
-typedef struct ALIGN {
-    real x, y, z;
-    real q;
-    float radius, scaledRadius;
-    real bornSum;
-} AtomData1;
-
-AtomData1 x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-
-x.x = 1.0f;
-)";
-
-  std::string expected7 = R"(
-    typedef float real;
-    #define USE_HIP
-
-    #if defined(USE_HIP)
-        #define ALIGN alignas(16)
-    #else
-        #define ALIGN
-    #endif
-
-typedef struct alignas(16) {
-    real x, y, z;
-    real q;
-    float radius, scaledRadius;
-    real bornSum;
-} AtomData1;
-
-AtomData1 x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-
-x.x = 1.0f;
-)";
-  EXPECT_EQ(typeSub(source7), expected7);
+TEST_F(TypeMapTest, VectorTypeMapping) {
+    TypeMap typeMap;
+    
+    // HIP vector types
+    typeMap.registerType("float4", 16);  // 4 * sizeof(float)
+    typeMap.registerType("int2", 8);     // 2 * sizeof(int)
+    
+    EXPECT_EQ(typeMap.getTypeSize("float4"), 16);
+    EXPECT_EQ(typeMap.getTypeSize("int2"), 8);
 }
+
+TEST_F(TypeMapTest, ComplexTypeMapping) {
+    TypeMap typeMap;
+    
+    struct ComplexStruct {
+        float4 position;
+        int2 indices;
+        float values[4];
+        int flags;
+    };
+    
+    typeMap.registerType("ComplexStruct", sizeof(ComplexStruct));
+    EXPECT_EQ(typeMap.getTypeSize("ComplexStruct"), sizeof(ComplexStruct));
+}
+
+TEST_F(TypeMapTest, TypedefHandling) {
+    TypeMap typeMap;
+    
+    // Register typedefs
+    typeMap.registerTypedef("MyCustomFloat", "float");
+    typeMap.registerTypedef("MyCustomFloat4", "float4");
+    
+    EXPECT_EQ(typeMap.getTypeSize("MyCustomFloat"), sizeof(float));
+    EXPECT_EQ(typeMap.getTypeSize("MyCustomFloat4"), 16);  // assuming float4 was registered
+    
+    // Test chained typedefs
+    typeMap.registerTypedef("ChainedType1", "MyCustomFloat");
+    typeMap.registerTypedef("ChainedType2", "ChainedType1");
+    EXPECT_EQ(typeMap.getTypeSize("ChainedType2"), sizeof(float));
+}
+
+TEST_F(TypeMapTest, ErrorHandling) {
+    TypeMap typeMap;
+    
+    // Test unknown type
+    EXPECT_THROW(typeMap.getTypeSize("UnknownType"), std::runtime_error);
+    
+    // Test invalid registration
+    EXPECT_THROW(typeMap.registerType("", 4), std::invalid_argument);
+    EXPECT_THROW(typeMap.registerType("InvalidType", 0), std::invalid_argument);
+}
+
+TEST_F(TypeMapTest, ParseStructDefinition) {
+    TypeMap typeMap;
+    
+    // Test parsing a struct definition from source
+    std::string source = R"(
+        typedef float real;
+        typedef struct alignas(16) {
+            real x, y, z;
+            real q;
+            float radius, scaledRadius;
+            real bornSum;
+        } AtomData1;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify the struct was correctly parsed and registered
+    EXPECT_TRUE(typeMap.isTypeRegistered("AtomData1"));
+    EXPECT_EQ(typeMap.getAlignment("AtomData1"), 16);
+    
+    // Size should match the actual struct layout
+    struct TestAtomData1 {
+        float x, y, z;
+        float q;
+        float radius, scaledRadius;
+        float bornSum;
+    };
+    EXPECT_EQ(typeMap.getTypeSize("AtomData1"), sizeof(TestAtomData1));
+}
+
+TEST_F(TypeMapTest, ParseMultipleStructs) {
+    TypeMap typeMap;
+    
+    std::string source = R"(
+        typedef float real;
+        
+        typedef struct alignas(16) {
+            real x, y, z;
+            real q;
+        } Atom;
+        
+        typedef struct {
+            Atom atoms[2];
+            float energy;
+        } MoleculeData;
+        
+        typedef struct alignas(32) {
+            MoleculeData molecules[4];
+            int flags;
+        } SystemData;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify all structs were parsed and registered
+    EXPECT_TRUE(typeMap.isTypeRegistered("Atom"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("MoleculeData"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("SystemData"));
+    
+    // Verify alignments
+    EXPECT_EQ(typeMap.getAlignment("Atom"), 16);
+    EXPECT_EQ(typeMap.getAlignment("SystemData"), 32);
+    
+    // Verify sizes match actual struct layouts
+    struct TestAtom {
+        float x, y, z;
+        float q;
+    };
+    
+    struct TestMoleculeData {
+        TestAtom atoms[2];
+        float energy;
+    };
+    
+    struct alignas(32) TestSystemData {
+        TestMoleculeData molecules[4];
+        int flags;
+    };
+    
+    EXPECT_EQ(typeMap.getTypeSize("Atom"), sizeof(TestAtom));
+    EXPECT_EQ(typeMap.getTypeSize("MoleculeData"), sizeof(TestMoleculeData));
+    EXPECT_EQ(typeMap.getTypeSize("SystemData"), sizeof(TestSystemData));
+}
+
+TEST_F(TypeMapTest, ParseNestedTypedefs) {
+    TypeMap typeMap;
+    
+    std::string source = R"(
+        typedef float real;
+        typedef real real4[4];
+        typedef real4 matrix[4];
+        
+        typedef struct {
+            matrix transform;
+            real4 position;
+            real scale;
+        } TransformData;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify typedefs and struct were parsed
+    EXPECT_TRUE(typeMap.isTypeRegistered("real"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("real4"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("matrix"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("TransformData"));
+    
+    // Verify sizes
+    EXPECT_EQ(typeMap.getTypeSize("real"), sizeof(float));
+    EXPECT_EQ(typeMap.getTypeSize("real4"), sizeof(float[4]));
+    EXPECT_EQ(typeMap.getTypeSize("matrix"), sizeof(float[4][4]));
+    
+    struct TestTransformData {
+        float transform[4][4];
+        float position[4];
+        float scale;
+    };
+    EXPECT_EQ(typeMap.getTypeSize("TransformData"), sizeof(TestTransformData));
+}
+
+TEST_F(TypeMapTest, ParseHIPTypes) {
+    TypeMap typeMap;
+    
+    std::string source = R"(
+        typedef struct {
+            float4 posq;
+            float2 sigma_epsilon;
+            int3 indices;
+            float energy;
+        } ParticleData;
+        
+        typedef struct alignas(16) {
+            ParticleData particles[64];
+            int2 bounds;
+            uint flags;
+        } BlockData;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify structs using HIP types were parsed
+    EXPECT_TRUE(typeMap.isTypeRegistered("ParticleData"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("BlockData"));
+    
+    // Verify sizes match actual struct layouts
+    struct TestParticleData {
+        float4 posq;
+        float2 sigma_epsilon;
+        int3 indices;
+        float energy;
+    };
+    
+    struct alignas(16) TestBlockData {
+        TestParticleData particles[64];
+        int2 bounds;
+        uint flags;
+    };
+    
+    EXPECT_EQ(typeMap.getTypeSize("ParticleData"), sizeof(TestParticleData));
+    EXPECT_EQ(typeMap.getTypeSize("BlockData"), sizeof(TestBlockData));
+    EXPECT_EQ(typeMap.getAlignment("BlockData"), 16);
+}
+
+// TODO: insert tests for type size parsing
