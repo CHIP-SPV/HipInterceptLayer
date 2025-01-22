@@ -151,37 +151,35 @@ void parseKernelsFromSource(const std::string &source) {
 }
 
 std::string typeSub(const std::string &source) {
-  std::string result = source;
   std::map<std::string, std::string> replacements;
+  std::vector<std::string> lines;
+  std::set<size_t> definition_lines;
+  
+  // Split source into lines
+  std::istringstream iss(source);
+  std::string line;
+  while (std::getline(iss, line)) {
+    lines.push_back(line);
+  }
   
   // Regular expressions for matching different type definitions
   std::regex typedef_regex(R"(typedef\s+([^;]+)\s+(\w+);)");
   std::regex using_regex(R"(using\s+(\w+)\s*=\s*([^;]+);)");
   std::regex define_regex(R"(#define\s+(\w+)\s+([^\n]+))");
   
-  // First pass: collect all type definitions and remove the lines
-  std::string::const_iterator search_start(source.cbegin());
-  std::smatch match;
-  
-  // Find all typedefs and remove them
-  while (std::regex_search(result, match, typedef_regex)) {
-    replacements[match[2]] = match[1];
-    // Remove the typedef line
-    result.erase(match.position(), match.length());
-  }
-  
-  // Find all using declarations and remove them
-  while (std::regex_search(result, match, using_regex)) {
-    replacements[match[1]] = match[2];
-    // Remove the using line
-    result.erase(match.position(), match.length());
-  }
-  
-  // Find all #define macros and remove them
-  while (std::regex_search(result, match, define_regex)) {
-    replacements[match[1]] = match[2];
-    // Remove the #define line
-    result.erase(match.position(), match.length());
+  // First pass: collect all type definitions and their line numbers
+  for (size_t i = 0; i < lines.size(); ++i) {
+    std::smatch match;
+    if (std::regex_search(lines[i], match, typedef_regex)) {
+      replacements[match[2]] = match[1];
+      definition_lines.insert(i);
+    } else if (std::regex_search(lines[i], match, using_regex)) {
+      replacements[match[1]] = match[2];
+      definition_lines.insert(i);
+    } else if (std::regex_search(lines[i], match, define_regex)) {
+      replacements[match[1]] = match[2];
+      definition_lines.insert(i);
+    }
   }
   
   // Resolve chained typedefs to their base types
@@ -201,13 +199,31 @@ std::string typeSub(const std::string &source) {
     }
   } while (changed);
   
-  // Second pass: perform replacements
-  for (const auto &[alias, original] : replacements) {
-    std::regex word_regex("\\b" + alias + "\\b");
-    result = std::regex_replace(result, word_regex, original);
+  // Second pass: perform replacements on non-definition lines
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (definition_lines.find(i) == definition_lines.end()) {
+      for (const auto &[alias, original] : replacements) {
+        std::regex word_regex("\\b" + alias + "\\b");
+        lines[i] = std::regex_replace(lines[i], word_regex, original);
+      }
+    }
   }
   
-  return result;
+  // Reconstruct the result
+  std::ostringstream oss;
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (i > 0) {
+      oss << "\n";
+    }
+    oss << lines[i];
+  }
+  
+  // Add final newline if source ends with one
+  if (!source.empty() && source.back() == '\n') {
+    oss << "\n";
+  }
+  
+  return oss.str();
 }
 
 std::string preprocess_source(const std::string &source, int numHeaders,
