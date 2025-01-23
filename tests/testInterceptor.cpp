@@ -1,5 +1,4 @@
 #include "../Interceptor.hh"
-#include "../TypeMap.hh"
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 #include <hip/hip_vector_types.h>

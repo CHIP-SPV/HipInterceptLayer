@@ -25,7 +25,7 @@ function(add_test_binary TARGET_NAME SOURCE_FILE)
     add_dependencies(tests ${TARGET_NAME})
 endfunction()
 
-add_test_binary(testInterceptor testInterceptor.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc ${CMAKE_SOURCE_DIR}/TypeMap.cc)
+add_test_binary(testInterceptor testInterceptor.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc)
 add_test_binary(testKernelManager testKernelManager.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc)
 add_test_binary(testComparator testComparator.cpp)
 add_test_binary(testCodeGen testCodeGen.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc)
