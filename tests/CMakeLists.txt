@@ -29,6 +29,7 @@ add_test_binary(testInterceptor testInterceptor.cpp ${CMAKE_SOURCE_DIR}/Tracer.c
 add_test_binary(testKernelManager testKernelManager.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc)
 add_test_binary(testComparator testComparator.cpp)
 add_test_binary(testCodeGen testCodeGen.cpp ${CMAKE_SOURCE_DIR}/Tracer.cc)
+add_test_binary(testTypeMap testTypeMap.cpp)
 
 function(add_hip_trace_target TARGET_NAME SOURCE_FILE)
     # Create the executable
