@@ -12,6 +12,17 @@
 #include <hip/hip_runtime.h>
 
 class TypeMap {
+private:
+    struct TypeInfo {
+        size_t size;
+        size_t alignment;
+        std::string baseType;  // empty for direct types, contains target type for typedefs/defines
+        bool is_struct;        // true if this is a struct type
+        std::vector<std::pair<std::string, std::string>> members;  // member name and type pairs for structs
+    };
+    
+    std::map<std::string, TypeInfo> types;
+
 public:
     TypeMap() {
         initializeBuiltinTypes();
@@ -26,10 +37,11 @@ public:
             throw std::invalid_argument("Type size cannot be 0");
         }
         
+        // fprintf(stderr, "Registering type: %s (size=%zu, align=%zu)\n", typeName.c_str(), size, alignment);
         types[typeName] = TypeInfo{size, alignment, ""};
     }
     
-    // Register a typedef that points to another type
+    // Register a typedef/define that points to another type
     void registerTypedef(const std::string& newType, const std::string& existingType) {
         if (newType.empty() || existingType.empty()) {
             throw std::invalid_argument("Type names cannot be empty");
@@ -40,6 +52,7 @@ public:
             throw std::runtime_error("Target type '" + existingType + "' is not registered");
         }
         
+        // fprintf(stderr, "Registering typedef/define: %s -> %s\n", newType.c_str(), existingType.c_str());
         types[newType] = TypeInfo{0, 0, existingType};
     }
     
@@ -142,7 +155,7 @@ public:
         bool in_struct = false;
         size_t brace_count = 0;
 
-        // First pass: Collect all typedef declarations
+        // First pass: Collect all typedef declarations and defines
         while (std::getline(stream, line)) {
             // Remove comments and trim whitespace
             size_t comment_pos = line.find("//");
@@ -156,7 +169,9 @@ public:
             brace_count += std::count(line.begin(), line.end(), '{');
             brace_count -= std::count(line.begin(), line.end(), '}');
 
-            if (line.find("typedef") != std::string::npos) {
+            if (line.find("#define") != std::string::npos) {
+                collectDefine(line);
+            } else if (line.find("typedef") != std::string::npos) {
                 if (line.find("struct") != std::string::npos) {
                     in_struct = true;
                     current_block = line + "\n";
@@ -217,6 +232,21 @@ public:
         }
     }
 
+    void collectDefine(const std::string& define_str) {
+        static std::regex define_regex(R"(#define\s+(\w+)\s+(\w+))");
+        
+        std::smatch match;
+        if (std::regex_search(define_str, match, define_regex)) {
+            std::string name = match[1].str();
+            std::string value = match[2].str();
+            
+            // Handle #define similar to typedef
+            if (isTypeRegistered(value)) {
+                registerTypedef(name, value);
+            }
+        }
+    }
+
     /**
      * @brief Parse and collect a single typedef declaration
      * 
@@ -254,16 +284,6 @@ public:
     }
 
 private:
-    struct TypeInfo {
-        size_t size;
-        size_t alignment;
-        std::string baseType;  // empty for direct types, contains target type for typedefs
-        bool is_struct;        // true if this is a struct type
-        std::vector<std::pair<std::string, std::string>> members;  // member name and type pairs for structs
-    };
-    
-    std::map<std::string, TypeInfo> types;
-    
     // Helper to resolve typedefs
     std::string resolveTypedef(const std::string& typeName) const {
         std::string current = typeName;

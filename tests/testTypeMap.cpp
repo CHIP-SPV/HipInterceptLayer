@@ -101,8 +101,10 @@ TEST_F(TypeMapTest, ComplexTypeParsing) {
     
     // Test parsing complex type definitions that mix known types
     std::string source = R"(
-        typedef float real;                  // Base scientific type
-        typedef real4 vector;                // Using HIP's float4
+        #define real float                  // Base scientific type
+        #define real4 float4 
+        typedef float myType;               // First define myType as float
+        typedef real4 vector;               // Then use real4 (which expands to float4)
         typedef vector positions[1000];      // Array of vectors
         typedef struct {
             vector pos;                      // float4 position
@@ -112,6 +114,9 @@ TEST_F(TypeMapTest, ComplexTypeParsing) {
     )";
     
     typeMap.parseSource(source);
+
+    EXPECT_TRUE(typeMap.isTypeRegistered("myType"));
+    EXPECT_EQ(typeMap.getTypeSize("myType"), sizeof(float));
     
     // Verify resolution to known types
     EXPECT_TRUE(typeMap.isTypeRegistered("real"));
@@ -281,4 +286,4 @@ TEST_F(TypeMapTest, ClearFunctionality) {
     EXPECT_TRUE(typeMap.isTypeRegistered("int"));
     EXPECT_TRUE(typeMap.isTypeRegistered("float"));
     EXPECT_TRUE(typeMap.isTypeRegistered("double"));
-} 
+}
