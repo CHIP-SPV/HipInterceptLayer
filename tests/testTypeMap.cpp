@@ -90,9 +90,11 @@ TEST_F(TypeMapTest, SimpleTypeParsing) {
     EXPECT_TRUE(typeMap.isTypeRegistered("real"));
     EXPECT_EQ(typeMap.getTypeSize("real"), sizeof(float));
     EXPECT_TRUE(typeMap.isTypeRegistered("real4"));
-    EXPECT_EQ(typeMap.getTypeSize("real4"), sizeof(float) * 4);
+    // real4 is an array of 4 floats, sizeof(float) = 4, so 4*4 = 16
+    EXPECT_EQ(typeMap.getTypeSize("real4"), 16);
     EXPECT_TRUE(typeMap.isTypeRegistered("matrix"));
-    EXPECT_EQ(typeMap.getTypeSize("matrix"), sizeof(float) * 4 * 4);
+    // matrix is an array of 4 float4s, sizeof(float4) = 16, so 16*4 = 64
+    EXPECT_EQ(typeMap.getTypeSize("matrix"), 64);
 }
 
 // Test parsing of complex type definitions
@@ -176,7 +178,12 @@ TEST_F(TypeMapTest, StructParsing) {
             double position[3];
             float mass;
             int id;
+            int tid;
         } Particle;
+
+        typedef struct alignas(16) {
+            Particle particles[1000];
+        } ParticleArray;
     )";
     
     typeMap.parseSource(source);
@@ -189,8 +196,21 @@ TEST_F(TypeMapTest, StructParsing) {
     EXPECT_TRUE(typeMap.isTypeRegistered("Particle"));
     EXPECT_EQ(typeMap.getAlignment("Particle"), 16);
     // Size should account for alignment and padding
-    size_t expected_size = ((3 * sizeof(double) + sizeof(float) + sizeof(int) + 15) / 16) * 16;
-    EXPECT_EQ(typeMap.getTypeSize("Particle"), expected_size);
+    // 3 doubles (24 bytes) + 1 float (4 bytes) + 1 int (4 bytes) + 1 int (4 bytes) = 36 bytes
+    // 36 bytes is not a multiple of 16, so we need to pad to the next multiple of 16 which is 48
+    size_t expected_size = 48;
+    size_t actual_size = typeMap.getTypeSize("Particle");
+    fprintf(stderr, "Particle size: expected=%zu, actual=%zu\n", expected_size, actual_size);
+    EXPECT_EQ(actual_size, expected_size);
+
+    // Verify ParticleArray struct with explicit alignment
+    EXPECT_TRUE(typeMap.isTypeRegistered("ParticleArray"));
+    EXPECT_EQ(typeMap.getAlignment("ParticleArray"), 16);
+    // Size should account for alignment and padding
+    expected_size = 1000 * 48;
+    actual_size = typeMap.getTypeSize("ParticleArray");
+    fprintf(stderr, "ParticleArray size: expected=%zu, actual=%zu\n", expected_size, actual_size);
+    EXPECT_EQ(actual_size, expected_size);
 }
 
 // Test circular typedef detection

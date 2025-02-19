@@ -15,10 +15,12 @@ class TypeMap {
 private:
     struct TypeInfo {
         size_t size;
+        size_t array_size = 1;
         size_t alignment;
         std::string baseType;  // empty for direct types, contains target type for typedefs/defines
         bool is_struct;        // true if this is a struct type
-        std::vector<std::pair<std::string, std::string>> members;  // member name and type pairs for structs
+        // member name, type, and array size (1 for non-array members)
+        std::vector<std::tuple<std::string, std::string, size_t>> members;
     };
     
     std::map<std::string, TypeInfo> types;
@@ -29,7 +31,7 @@ public:
     }
 
     // Register a type with its size
-    void registerType(const std::string& typeName, size_t size, size_t alignment = 0) {
+    void registerType(const std::string& typeName, size_t size, size_t alignment = 0, size_t array_size = 1) {
         if (typeName.empty()) {
             throw std::invalid_argument("Type name cannot be empty");
         }
@@ -37,8 +39,13 @@ public:
             throw std::invalid_argument("Type size cannot be 0");
         }
         
-        // fprintf(stderr, "Registering type: %s (size=%zu, align=%zu)\n", typeName.c_str(), size, alignment);
-        types[typeName] = TypeInfo{size, alignment, ""};
+        // fprintf(stderr, "Registering type: %s (size=%zu, align=%zu, array_size=%zu)\n", typeName.c_str(), size, alignment, array_size);
+        TypeInfo info;
+        info.size = size;
+        info.alignment = alignment;
+        info.array_size = array_size;
+        info.baseType = "";
+        types[typeName] = info;
     }
     
     // Register a typedef/define that points to another type
@@ -53,7 +60,8 @@ public:
         }
         
         // fprintf(stderr, "Registering typedef/define: %s -> %s\n", newType.c_str(), existingType.c_str());
-        types[newType] = TypeInfo{0, 0, existingType};
+        auto targetType = types[resolveTypedef(existingType)];
+        types[newType] = TypeInfo{0, targetType.array_size, 0, existingType};
     }
     
     // Get the size of a type
@@ -64,8 +72,8 @@ public:
         if (it == types.end()) {
             throw std::runtime_error("Type '" + typeName + "' is not registered");
         }
-        
-        return it->second.size;
+
+        return it->second.size * it->second.array_size;
     }
     
     // Get the alignment of a type (returns 0 if not specified)
@@ -78,6 +86,18 @@ public:
         }
         
         return it->second.alignment;
+    }
+
+    // Get the array size of a type (returns 1 for non-array types)
+    size_t getArraySize(const std::string& typeName) const {
+        std::string resolvedType = resolveTypedef(typeName);
+        
+        auto it = types.find(resolvedType);
+        if (it == types.end()) {
+            throw std::runtime_error("Type '" + typeName + "' is not registered");
+        }
+        
+        return it->second.array_size;
     }
     
     // Check if a type is registered
@@ -155,9 +175,7 @@ public:
         bool in_struct = false;
         size_t brace_count = 0;
 
-        // First pass: Collect all typedef declarations and defines
         while (std::getline(stream, line)) {
-            // Remove comments and trim whitespace
             size_t comment_pos = line.find("//");
             if (comment_pos != std::string::npos) {
                 line = line.substr(0, comment_pos);
@@ -165,7 +183,6 @@ public:
             line = std::regex_replace(line, std::regex("^\\s+|\\s+$"), "");
             if (line.empty()) continue;
 
-            // Track struct definitions
             brace_count += std::count(line.begin(), line.end(), '{');
             brace_count -= std::count(line.begin(), line.end(), '}');
 
@@ -176,7 +193,6 @@ public:
                     in_struct = true;
                     current_block = line + "\n";
                 } else {
-                    // Parse simple typedef
                     collectTypedef(line, typedefs);
                 }
             } else if (in_struct) {
@@ -189,23 +205,20 @@ public:
             }
         }
 
-        // Process typedefs in waves
         bool progress;
         do {
             progress = false;
             auto it = typedefs.begin();
             while (it != typedefs.end()) {
                 if (it->isArray) {
-                    // For array types, check if base type is now known
                     if (isTypeRegistered(it->baseType)) {
                         size_t baseSize = getTypeSize(it->baseType);
-                        registerType(it->newType, baseSize * it->arraySize);
+                        registerType(it->newType, baseSize, 0, it->arraySize);
                         progress = true;
                         it = typedefs.erase(it);
                         continue;
                     }
                 } else {
-                    // For simple typedefs, check if target type is now known
                     if (isTypeRegistered(it->targetType)) {
                         registerTypedef(it->newType, it->targetType);
                         progress = true;
@@ -217,12 +230,10 @@ public:
             }
         } while (progress && !typedefs.empty());
 
-        // Process struct blocks last, as they might depend on typedefs
         for (const auto& block : structBlocks) {
             parseTypedef(block);
         }
 
-        // If there are unresolved typedefs, they likely have circular dependencies
         if (!typedefs.empty()) {
             std::string unresolved;
             for (const auto& td : typedefs) {
@@ -240,7 +251,6 @@ public:
             std::string name = match[1].str();
             std::string value = match[2].str();
             
-            // Handle #define similar to typedef
             if (isTypeRegistered(value)) {
                 registerTypedef(name, value);
             }
@@ -266,15 +276,19 @@ public:
 
         std::smatch match;
         if (std::regex_search(typedef_str, match, array_typedef_regex)) {
-            // Array typedef
             TypedefDeclaration decl;
             decl.baseType = match[1].str();
             decl.newType = match[2].str();
             decl.arraySize = std::stoul(match[3].str());
             decl.isArray = true;
-            typedefs.push_back(decl);
+            
+            if (isTypeRegistered(decl.baseType)) {
+                size_t baseSize = getTypeSize(decl.baseType);
+                registerType(decl.newType, baseSize, 0, decl.arraySize);
+            } else {
+                typedefs.push_back(decl);
+            }
         } else if (std::regex_search(typedef_str, match, simple_typedef_regex)) {
-            // Simple typedef
             TypedefDeclaration decl;
             decl.targetType = match[1].str();
             decl.newType = match[2].str();
@@ -284,7 +298,6 @@ public:
     }
 
 private:
-    // Helper to resolve typedefs
     std::string resolveTypedef(const std::string& typeName) const {
         std::string current = typeName;
         std::set<std::string> visited;
@@ -292,14 +305,13 @@ private:
         while (true) {
             auto it = types.find(current);
             if (it == types.end()) {
-                return current;  // Type not found, return as is
+                return current;
             }
             
             if (it->second.baseType.empty()) {
-                return current;  // Found a concrete type
+                return current;
             }
             
-            // Check for circular typedefs
             if (visited.find(current) != visited.end()) {
                 throw std::runtime_error("Circular typedef detected for type '" + typeName + "'");
             }
@@ -309,9 +321,7 @@ private:
         }
     }
     
-    // Initialize built-in types
     void initializeBuiltinTypes() {
-        // Basic types
         registerType("char", sizeof(char));
         registerType("short", sizeof(short));
         registerType("int", sizeof(int));
@@ -319,13 +329,11 @@ private:
         registerType("float", sizeof(float));
         registerType("double", sizeof(double));
         
-        // Unsigned variants
         registerType("unsigned char", sizeof(unsigned char));
         registerType("unsigned short", sizeof(unsigned short));
         registerType("unsigned int", sizeof(unsigned int));
         registerType("unsigned long", sizeof(unsigned long));
         
-        // Fixed-width types
         registerType("int8_t", sizeof(int8_t));
         registerType("uint8_t", sizeof(uint8_t));
         registerType("int16_t", sizeof(int16_t));
@@ -335,7 +343,6 @@ private:
         registerType("int64_t", sizeof(int64_t));
         registerType("uint64_t", sizeof(uint64_t));
         
-        // HIP vector types
         registerType("char2", sizeof(char2));
         registerType("char3", sizeof(char3));
         registerType("char4", sizeof(char4));
@@ -368,34 +375,28 @@ private:
         registerType("double4", sizeof(double4));
     }
 
-    // Source parsing helpers
     void parseTypedef(const std::string& typedef_str) {
         static std::regex struct_regex(R"(typedef\s+struct\s+(?:alignas\s*\((\d+)\))?\s*\{([^}]+)\}\s*(\w+)\s*;)");
         static std::regex simple_typedef_regex(R"(typedef\s+(\w+(?:\s*\[\d+\])?)\s+(\w+(?:\s*\[\d+\])?)\s*;)");
 
         std::smatch match;
         if (std::regex_search(typedef_str, match, struct_regex)) {
-            // Struct typedef
             size_t alignment = match[1].matched ? std::stoul(match[1].str()) : 0;
             std::string struct_body = match[2].str();
             std::string type_name = match[3].str();
             parseStruct(struct_body, type_name, alignment);
         } else if (std::regex_search(typedef_str, match, simple_typedef_regex)) {
-            // Simple typedef
             std::string existing_type = match[1].str();
             std::string new_type = match[2].str();
 
-            // Check if this is an array type
             std::regex array_regex(R"((\w+)\s*\[(\d+)\])");
             std::smatch array_match;
             if (std::regex_search(existing_type, array_match, array_regex)) {
-                // This is an array type, calculate its size
                 std::string base_type = array_match[1].str();
                 size_t array_size = std::stoul(array_match[2].str());
                 size_t base_size = getTypeSize(base_type);
-                registerType(new_type, base_size * array_size);
+                registerType(new_type, base_size, 0, array_size);
             } else {
-                // Regular typedef
                 registerTypedef(new_type, existing_type);
             }
         }
@@ -409,48 +410,67 @@ private:
         info.members = members;
         info.alignment = alignment;
         info.baseType = "";
+        info.array_size = 1;
         
-        // Calculate struct size based on members and alignment
+        fprintf(stderr, "Parsing struct %s with alignment %zu\n", name.c_str(), alignment);
+        
         info.size = calculateStructSize(info);
+        
+        fprintf(stderr, "Final struct %s size: %zu\n", name.c_str(), info.size);
         
         types[name] = info;
     }
 
     size_t calculateStructSize(const TypeInfo& structInfo) const {
-        size_t total_size = 0;
-        size_t max_align = structInfo.alignment > 0 ? structInfo.alignment : 1;
+        size_t current_offset = 0;
+        size_t struct_alignment = structInfo.alignment > 0 ? structInfo.alignment : 1;
 
         for (const auto& member : structInfo.members) {
-            const std::string& member_type = member.second;
+            const auto& [member_name, member_type, array_size] = member;
             
-            // Get member size and alignment
-            size_t member_size = getTypeSize(member_type);
-            size_t member_align = getAlignment(member_type);
-            if (member_align == 0) member_align = member_size; // Default alignment
+            // Get member's base size and natural alignment
+            size_t base_size = getTypeSize(member_type);
+            size_t member_alignment = getAlignment(member_type);
             
-            // Update max alignment
-            max_align = std::max(max_align, member_align);
+            // If member has no explicit alignment, use its size as natural alignment
+            // Vector types (float4, int2, etc.) typically align to their size
+            if (member_alignment == 0) {
+                member_alignment = base_size >= 16 ? 16 : 
+                                 base_size >= 8 ? 8 :
+                                 base_size >= 4 ? 4 :
+                                 base_size >= 2 ? 2 : 1;
+            }
+
+            // Align current offset to member's alignment requirement
+            size_t padding = (member_alignment - (current_offset % member_alignment)) % member_alignment;
+            current_offset += padding;
+
+            size_t member_size = base_size * array_size;
+            fprintf(stderr, "Member %s size: %zu (base=%zu, array_size=%zu)\n", 
+                    member_name.c_str(), member_size, base_size, array_size);
             
-            // Add padding for alignment
-            total_size = (total_size + member_align - 1) & ~(member_align - 1);
-            total_size += member_size;
+            current_offset += member_size;
         }
 
-        // Final size must be multiple of max alignment
-        total_size = (total_size + max_align - 1) & ~(max_align - 1);
+        // Final alignment to struct's alignment requirement
+        size_t remainder = current_offset % struct_alignment;
+        if (remainder != 0) {
+            fprintf(stderr, "Padding struct from %zu to %zu\n", current_offset, current_offset + struct_alignment - remainder);
+            current_offset += struct_alignment - remainder;
+        }
         
-        return total_size;
+        return current_offset;
     }
 
-    std::vector<std::pair<std::string, std::string>> parseStructMembers(const std::string& struct_body) {
-        std::vector<std::pair<std::string, std::string>> members;
+    std::vector<std::tuple<std::string, std::string, size_t>> parseStructMembers(const std::string& struct_body) {
+        std::vector<std::tuple<std::string, std::string, size_t>> members;
         std::istringstream stream(struct_body);
         std::string line;
 
-        static std::regex member_regex(R"((\w+(?:\s*[*])?)\s+([^;]+);)");
+        // Updated regex to better handle array declarations
+        static std::regex member_regex(R"((\w+(?:\s*[*])?)\s+(\w+)(?:\[(\d+)\])?;)");
         
         while (std::getline(stream, line)) {
-            // Remove comments and leading/trailing whitespace
             size_t comment_pos = line.find("//");
             if (comment_pos != std::string::npos) {
                 line = line.substr(0, comment_pos);
@@ -462,15 +482,12 @@ private:
             std::smatch match;
             if (std::regex_search(line, match, member_regex)) {
                 std::string type = match[1].str();
-                std::string names = match[2].str();
+                std::string name = match[2].str();
+                size_t array_size = match[3].matched ? std::stoul(match[3].str()) : 1;
                 
-                // Split multiple declarations (e.g., "x, y, z")
-                std::istringstream name_stream(names);
-                std::string name;
-                while (std::getline(name_stream, name, ',')) {
-                    name = std::regex_replace(name, std::regex("^\\s+|\\s+$"), "");
-                    members.emplace_back(name, type);
-                }
+                fprintf(stderr, "Parsing member: type=%s, name=%s, array_size=%zu\n", 
+                        type.c_str(), name.c_str(), array_size);
+                members.emplace_back(name, type, array_size);
             }
         }
 
