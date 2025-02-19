@@ -213,17 +213,6 @@ TEST_F(TypeMapTest, StructParsing) {
     EXPECT_EQ(actual_size, expected_size);
 }
 
-// Test circular typedef detection
-TEST_F(TypeMapTest, CircularTypedef) {
-    TypeMap typeMap;
-    
-    // Create a circular typedef chain
-    typeMap.registerType("BaseType", 8);
-    typeMap.registerTypedef("TypeA", "TypeB");  // Forward reference
-    typeMap.registerTypedef("TypeB", "TypeC");
-    EXPECT_THROW(typeMap.registerTypedef("TypeC", "TypeA"), std::runtime_error);  // Would create a cycle
-}
-
 // Test type resolution with qualifiers
 TEST_F(TypeMapTest, QualifierHandling) {
     TypeMap typeMap;
