@@ -83,51 +83,173 @@ public:
         initializeBuiltinTypes();
     }
 
-    // Parse source code to extract type information
+    /**
+     * @brief Represents a typedef declaration during source parsing
+     * 
+     * This structure tracks both simple typedefs and array typedefs:
+     * - For simple typedefs (e.g., 'typedef float real'):
+     *   - newType: The new type name ('real')
+     *   - targetType: The existing type being aliased ('float')
+     *   - isArray: false
+     * 
+     * - For array typedefs (e.g., 'typedef real vector[4]'):
+     *   - newType: The new array type name ('vector')
+     *   - baseType: The element type ('real')
+     *   - isArray: true
+     *   - arraySize: Number of elements (4)
+     */
+    struct TypedefDeclaration {
+        std::string newType;
+        std::string targetType;
+        bool isArray;
+        size_t arraySize;
+        std::string baseType;  // For array types, stores the element type
+    };
+
+    /**
+     * @brief Parse source code to extract and register type information
+     * 
+     * This implementation uses a wave-based approach to handle complex typedef chains:
+     * 1. First pass: Collect all typedef declarations and struct blocks without processing
+     * 2. Process typedefs in waves until all are resolved:
+     *    - Wave 1: Process typedefs that only depend on built-in/known types
+     *    - Wave 2: Process typedefs that depend on types registered in wave 1
+     *    - Continue until all typedefs are processed or no progress can be made
+     * 3. Finally process struct blocks which may depend on the typedefs
+     * 
+     * Example of wave processing:
+     * ```cpp
+     * typedef float real;          // Wave 1: depends on built-in 'float'
+     * typedef real real4[4];       // Wave 2: depends on 'real' from Wave 1
+     * typedef real4 matrix[4];     // Wave 3: depends on 'real4' from Wave 2
+     * ```
+     * 
+     * This approach correctly handles:
+     * - Chains of typedefs where later definitions depend on earlier ones
+     * - Array types where the base type is itself a typedef
+     * - Structs that use previously defined typedefs
+     * 
+     * @param source The source code to parse
+     * @throws std::runtime_error if circular dependencies are detected
+     */
     void parseSource(const std::string& source) {
+        std::vector<TypedefDeclaration> typedefs;
+        std::vector<std::string> structBlocks;
+        
         std::istringstream stream(source);
         std::string line;
         std::string current_block;
         bool in_struct = false;
         size_t brace_count = 0;
 
+        // First pass: Collect all typedef declarations
         while (std::getline(stream, line)) {
-            // Remove comments
+            // Remove comments and trim whitespace
             size_t comment_pos = line.find("//");
             if (comment_pos != std::string::npos) {
                 line = line.substr(0, comment_pos);
             }
-
-            // Trim whitespace
             line = std::regex_replace(line, std::regex("^\\s+|\\s+$"), "");
+            if (line.empty()) continue;
 
-            // Skip empty lines
-            if (line.empty()) {
-                continue;
-            }
-
-            // Count braces to track struct definitions
+            // Track struct definitions
             brace_count += std::count(line.begin(), line.end(), '{');
             brace_count -= std::count(line.begin(), line.end(), '}');
 
             if (line.find("typedef") != std::string::npos) {
                 if (line.find("struct") != std::string::npos) {
-                    // Start of struct typedef
                     in_struct = true;
-                    current_block += line + "\n";
+                    current_block = line + "\n";
                 } else {
-                    // Simple typedef
-                    parseTypedef(line);
+                    // Parse simple typedef
+                    collectTypedef(line, typedefs);
                 }
             } else if (in_struct) {
                 current_block += line + "\n";
                 if (brace_count == 0) {
-                    // End of struct definition
-                    parseTypedef(current_block);
+                    structBlocks.push_back(current_block);
                     current_block.clear();
                     in_struct = false;
                 }
             }
+        }
+
+        // Process typedefs in waves
+        bool progress;
+        do {
+            progress = false;
+            auto it = typedefs.begin();
+            while (it != typedefs.end()) {
+                if (it->isArray) {
+                    // For array types, check if base type is now known
+                    if (isTypeRegistered(it->baseType)) {
+                        size_t baseSize = getTypeSize(it->baseType);
+                        registerType(it->newType, baseSize * it->arraySize);
+                        progress = true;
+                        it = typedefs.erase(it);
+                        continue;
+                    }
+                } else {
+                    // For simple typedefs, check if target type is now known
+                    if (isTypeRegistered(it->targetType)) {
+                        registerTypedef(it->newType, it->targetType);
+                        progress = true;
+                        it = typedefs.erase(it);
+                        continue;
+                    }
+                }
+                ++it;
+            }
+        } while (progress && !typedefs.empty());
+
+        // Process struct blocks last, as they might depend on typedefs
+        for (const auto& block : structBlocks) {
+            parseTypedef(block);
+        }
+
+        // If there are unresolved typedefs, they likely have circular dependencies
+        if (!typedefs.empty()) {
+            std::string unresolved;
+            for (const auto& td : typedefs) {
+                unresolved += td.newType + ", ";
+            }
+            throw std::runtime_error("Unresolved typedefs (possible circular dependencies): " + unresolved);
+        }
+    }
+
+    /**
+     * @brief Parse and collect a single typedef declaration
+     * 
+     * Handles two forms of typedefs:
+     * 1. Simple typedefs: typedef existing_type new_type;
+     * 2. Array typedefs: typedef element_type new_type[size];
+     * 
+     * The collected declarations are stored for later processing in waves
+     * to handle dependencies correctly.
+     * 
+     * @param typedef_str The typedef declaration string to parse
+     * @param typedefs Vector to store the collected typedef declarations
+     */
+    void collectTypedef(const std::string& typedef_str, std::vector<TypedefDeclaration>& typedefs) {
+        static std::regex simple_typedef_regex(R"(typedef\s+(\w+)\s+(\w+)\s*;)");
+        static std::regex array_typedef_regex(R"(typedef\s+(\w+)\s+(\w+)\s*\[(\d+)\]\s*;)");
+
+        std::smatch match;
+        if (std::regex_search(typedef_str, match, array_typedef_regex)) {
+            // Array typedef
+            TypedefDeclaration decl;
+            decl.baseType = match[1].str();
+            decl.newType = match[2].str();
+            decl.arraySize = std::stoul(match[3].str());
+            decl.isArray = true;
+            typedefs.push_back(decl);
+        } else if (std::regex_search(typedef_str, match, simple_typedef_regex)) {
+            // Simple typedef
+            TypedefDeclaration decl;
+            decl.targetType = match[1].str();
+            decl.newType = match[2].str();
+            decl.isArray = false;
+            typedefs.push_back(decl);
         }
     }
 
