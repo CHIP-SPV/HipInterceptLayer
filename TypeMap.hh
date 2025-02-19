@@ -21,6 +21,7 @@ private:
         bool is_struct;        // true if this is a struct type
         // member name, type, and array size (1 for non-array members)
         std::vector<std::tuple<std::string, std::string, size_t>> members;
+        std::vector<std::string> qualifiers; // TODO: add qualifiers
     };
     
     std::map<std::string, TypeInfo> types;
@@ -116,21 +117,6 @@ public:
         initializeBuiltinTypes();
     }
 
-    /**
-     * @brief Represents a typedef declaration during source parsing
-     * 
-     * This structure tracks both simple typedefs and array typedefs:
-     * - For simple typedefs (e.g., 'typedef float real'):
-     *   - newType: The new type name ('real')
-     *   - targetType: The existing type being aliased ('float')
-     *   - isArray: false
-     * 
-     * - For array typedefs (e.g., 'typedef real vector[4]'):
-     *   - newType: The new array type name ('vector')
-     *   - baseType: The element type ('real')
-     *   - isArray: true
-     *   - arraySize: Number of elements (4)
-     */
     struct TypedefDeclaration {
         std::string newType;
         std::string targetType;
@@ -139,32 +125,6 @@ public:
         std::string baseType;  // For array types, stores the element type
     };
 
-    /**
-     * @brief Parse source code to extract and register type information
-     * 
-     * This implementation uses a wave-based approach to handle complex typedef chains:
-     * 1. First pass: Collect all typedef declarations and struct blocks without processing
-     * 2. Process typedefs in waves until all are resolved:
-     *    - Wave 1: Process typedefs that only depend on built-in/known types
-     *    - Wave 2: Process typedefs that depend on types registered in wave 1
-     *    - Continue until all typedefs are processed or no progress can be made
-     * 3. Finally process struct blocks which may depend on the typedefs
-     * 
-     * Example of wave processing:
-     * ```cpp
-     * typedef float real;          // Wave 1: depends on built-in 'float'
-     * typedef real real4[4];       // Wave 2: depends on 'real' from Wave 1
-     * typedef real4 matrix[4];     // Wave 3: depends on 'real4' from Wave 2
-     * ```
-     * 
-     * This approach correctly handles:
-     * - Chains of typedefs where later definitions depend on earlier ones
-     * - Array types where the base type is itself a typedef
-     * - Structs that use previously defined typedefs
-     * 
-     * @param source The source code to parse
-     * @throws std::runtime_error if circular dependencies are detected
-     */
     void parseSource(const std::string& source) {
         std::vector<TypedefDeclaration> typedefs;
         std::vector<std::string> structBlocks;
@@ -251,55 +211,85 @@ public:
             std::string name = match[1].str();
             std::string value = match[2].str();
             
-            if (isTypeRegistered(value)) {
-                registerTypedef(name, value);
+            // Handle pointer types in defines
+            bool isPointer = value.find('*') != std::string::npos;
+            std::string strippedValue = value;
+            if (isPointer) {
+                strippedValue = "ptr";
+            }
+            
+            if (isTypeRegistered(strippedValue)) {
+                registerTypedef(name, strippedValue);
             }
         }
     }
 
-    /**
-     * @brief Parse and collect a single typedef declaration
-     * 
-     * Handles two forms of typedefs:
-     * 1. Simple typedefs: typedef existing_type new_type;
-     * 2. Array typedefs: typedef element_type new_type[size];
-     * 
-     * The collected declarations are stored for later processing in waves
-     * to handle dependencies correctly.
-     * 
-     * @param typedef_str The typedef declaration string to parse
-     * @param typedefs Vector to store the collected typedef declarations
-     */
     void collectTypedef(const std::string& typedef_str, std::vector<TypedefDeclaration>& typedefs) {
-        static std::regex simple_typedef_regex(R"(typedef\s+(\w+)\s+(\w+)\s*;)");
-        static std::regex array_typedef_regex(R"(typedef\s+(\w+)\s+(\w+)\s*\[(\d+)\]\s*;)");
+        // Updated regex patterns to handle qualifiers and pointers
+        static std::regex simple_typedef_regex(R"(typedef\s+((?:const|volatile|restrict|\w+)\s+)*(\w+(?:\s*[*])?(?:\s+restrict)?)\s+(\w+)\s*;)");
+        static std::regex array_typedef_regex(R"(typedef\s+((?:const|volatile|restrict|\w+)\s+)*(\w+(?:\s*[*])?(?:\s+restrict)?)\s+(\w+)\s*\[(\d+)\]\s*;)");
 
         std::smatch match;
         if (std::regex_search(typedef_str, match, array_typedef_regex)) {
-            TypedefDeclaration decl;
-            decl.baseType = match[1].str();
-            decl.newType = match[2].str();
-            decl.arraySize = std::stoul(match[3].str());
-            decl.isArray = true;
+            std::string qualifiers = match[1].str();
+            std::string baseType = match[2].str();
+            std::string newType = match[3].str();
+            size_t arraySize = std::stoul(match[4].str());
+
+            // Handle pointer types
+            bool isPointer = baseType.find('*') != std::string::npos;
+            std::string strippedType = stripQualifiers(baseType);
+            if (isPointer) {
+                strippedType = "ptr";
+            }
             
-            if (isTypeRegistered(decl.baseType)) {
-                size_t baseSize = getTypeSize(decl.baseType);
-                registerType(decl.newType, baseSize, 0, decl.arraySize);
+            if (isTypeRegistered(strippedType)) {
+                size_t baseSize = getTypeSize(strippedType);
+                registerType(newType, baseSize, 0, arraySize);
             } else {
+                TypedefDeclaration decl;
+                decl.baseType = strippedType;
+                decl.newType = newType;
+                decl.arraySize = arraySize;
+                decl.isArray = true;
                 typedefs.push_back(decl);
             }
         } else if (std::regex_search(typedef_str, match, simple_typedef_regex)) {
+            std::string qualifiers = match[1].str();
+            std::string targetType = match[2].str();
+            std::string newType = match[3].str();
+
+            // Handle pointer types
+            bool isPointer = targetType.find('*') != std::string::npos;
+            std::string strippedType = stripQualifiers(targetType);
+            if (isPointer) {
+                strippedType = "ptr";
+            }
+
             TypedefDeclaration decl;
-            decl.targetType = match[1].str();
-            decl.newType = match[2].str();
+            decl.targetType = strippedType;
+            decl.newType = newType;
             decl.isArray = false;
             typedefs.push_back(decl);
         }
     }
 
 private:
+    std::string stripQualifiers(const std::string& typeName) const {
+        static std::regex qualifier_regex(R"((const|volatile|restrict)\s+)");
+        return std::regex_replace(typeName, qualifier_regex, "");
+    }
+
     std::string resolveTypedef(const std::string& typeName) const {
-        std::string current = typeName;
+        // First strip any qualifiers from the type name
+        std::string strippedType = stripQualifiers(typeName);
+        
+        // Handle pointer types
+        if (strippedType.find('*') != std::string::npos) {
+            return "ptr";
+        }
+        
+        std::string current = strippedType;
         std::set<std::string> visited;
         
         while (true) {
