@@ -179,6 +179,8 @@ TEST_F(TypeMapTest, StructParsing) {
             float mass;
             int id;
             int tid;
+            double *ptr;
+            Vector4 *whatever;
         } Particle;
 
         typedef struct alignas(16) {
@@ -211,6 +213,21 @@ TEST_F(TypeMapTest, StructParsing) {
     actual_size = typeMap.getTypeSize("ParticleArray");
     fprintf(stderr, "ParticleArray size: expected=%zu, actual=%zu\n", expected_size, actual_size);
     EXPECT_EQ(actual_size, expected_size);
+
+    // Verify ParticleArray with pointer to Particle
+    EXPECT_TRUE(typeMap.isTypeRegistered("ptr"));
+    EXPECT_EQ(typeMap.getTypeSize("ptr"), sizeof(double*));
+
+    typedef struct {
+            float x;
+            float y;
+            float z;
+            float w;
+        } Vector4;
+
+    // Verify Vector4 type is registered and pointer member has correct size
+    EXPECT_TRUE(typeMap.isTypeRegistered("Vector4"));
+    EXPECT_EQ(typeMap.getTypeSize("ptr"), sizeof(Vector4*));
 }
 
 // Test type resolution with qualifiers

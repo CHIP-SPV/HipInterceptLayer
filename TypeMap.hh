@@ -322,12 +322,16 @@ private:
     }
     
     void initializeBuiltinTypes() {
+        // Basic types
         registerType("char", sizeof(char));
         registerType("short", sizeof(short));
         registerType("int", sizeof(int));
         registerType("long", sizeof(long));
         registerType("float", sizeof(float));
         registerType("double", sizeof(double));
+        
+        // Pointer types
+        registerType("ptr", sizeof(void*));  // Generic pointer type
         
         registerType("unsigned char", sizeof(unsigned char));
         registerType("unsigned short", sizeof(unsigned short));
@@ -484,6 +488,12 @@ private:
                 std::string type = match[1].str();
                 std::string name = match[2].str();
                 size_t array_size = match[3].matched ? std::stoul(match[3].str()) : 1;
+                
+                // Check if this is a pointer type
+                if (type.find('*') != std::string::npos) {
+                    // Register it as a generic pointer type
+                    type = "ptr";
+                }
                 
                 fprintf(stderr, "Parsing member: type=%s, name=%s, array_size=%zu\n", 
                         type.c_str(), name.c_str(), array_size);
