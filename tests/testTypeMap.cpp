@@ -64,10 +64,221 @@ TEST_F(TypeMapTest, SimpleTypedef) {
 TEST_F(TypeMapTest, SimpleTypeParsing) {
     TypeMap typeMap;
     
-    // Test parsing a simple typedef
-    std::string source = "typedef int MyInt;";
+    // Test parsing a chain of typedefs that resolve to a known type
+    std::string source = R"(
+        typedef int MyInt;           // Direct mapping to known type
+        typedef MyInt MyInt2;        // One level of indirection
+        typedef MyInt2 MyInt3;       // Two levels of indirection
+        typedef float real;          // Common scientific computing typedef
+        typedef real real4[4];       // Array typedef
+        typedef real4 matrix[4];     // Nested array typedef
+    )";
+    
     typeMap.parseSource(source);
     
+    // Verify direct typedef to known type
     EXPECT_TRUE(typeMap.isTypeRegistered("MyInt"));
     EXPECT_EQ(typeMap.getTypeSize("MyInt"), sizeof(int));
+    
+    // Verify chain of typedefs
+    EXPECT_TRUE(typeMap.isTypeRegistered("MyInt2"));
+    EXPECT_EQ(typeMap.getTypeSize("MyInt2"), sizeof(int));
+    EXPECT_TRUE(typeMap.isTypeRegistered("MyInt3"));
+    EXPECT_EQ(typeMap.getTypeSize("MyInt3"), sizeof(int));
+    
+    // Verify scientific computing typedefs
+    EXPECT_TRUE(typeMap.isTypeRegistered("real"));
+    EXPECT_EQ(typeMap.getTypeSize("real"), sizeof(float));
+    EXPECT_TRUE(typeMap.isTypeRegistered("real4"));
+    EXPECT_EQ(typeMap.getTypeSize("real4"), sizeof(float) * 4);
+    EXPECT_TRUE(typeMap.isTypeRegistered("matrix"));
+    EXPECT_EQ(typeMap.getTypeSize("matrix"), sizeof(float) * 4 * 4);
+}
+
+// Test parsing of complex type definitions
+TEST_F(TypeMapTest, ComplexTypeParsing) {
+    TypeMap typeMap;
+    
+    // Test parsing complex type definitions that mix known types
+    std::string source = R"(
+        typedef float real;                  // Base scientific type
+        typedef real4 vector;                // Using HIP's float4
+        typedef vector positions[1000];      // Array of vectors
+        typedef struct {
+            vector pos;                      // float4 position
+            float mass;                      // Known type
+            int2 indices;                    // HIP's int2
+        } Particle;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify resolution to known types
+    EXPECT_TRUE(typeMap.isTypeRegistered("real"));
+    EXPECT_EQ(typeMap.getTypeSize("real"), sizeof(float));
+    
+    // Verify vector typedef resolves to float4
+    EXPECT_TRUE(typeMap.isTypeRegistered("vector"));
+    EXPECT_EQ(typeMap.getTypeSize("vector"), sizeof(float4));
+    
+    // Verify array type
+    EXPECT_TRUE(typeMap.isTypeRegistered("positions"));
+    EXPECT_EQ(typeMap.getTypeSize("positions"), sizeof(float4) * 1000);
+    
+    // Verify struct with mixed types
+    EXPECT_TRUE(typeMap.isTypeRegistered("Particle"));
+    struct TestParticle {
+        float4 pos;
+        float mass;
+        int2 indices;
+    };
+    EXPECT_EQ(typeMap.getTypeSize("Particle"), sizeof(TestParticle));
+}
+
+// Test HIP vector types
+TEST_F(TypeMapTest, HIPVectorTypes) {
+    TypeMap typeMap;
+    
+    // Test float vector types
+    EXPECT_EQ(typeMap.getTypeSize("float2"), sizeof(float2));
+    EXPECT_EQ(typeMap.getTypeSize("float3"), sizeof(float3));
+    EXPECT_EQ(typeMap.getTypeSize("float4"), sizeof(float4));
+    
+    // Test int vector types
+    EXPECT_EQ(typeMap.getTypeSize("int2"), sizeof(int2));
+    EXPECT_EQ(typeMap.getTypeSize("int3"), sizeof(int3));
+    EXPECT_EQ(typeMap.getTypeSize("int4"), sizeof(int4));
+    
+    // Test double vector types
+    EXPECT_EQ(typeMap.getTypeSize("double2"), sizeof(double2));
+    EXPECT_EQ(typeMap.getTypeSize("double3"), sizeof(double3));
+    EXPECT_EQ(typeMap.getTypeSize("double4"), sizeof(double4));
+}
+
+// Test struct parsing and size calculation
+TEST_F(TypeMapTest, StructParsing) {
+    TypeMap typeMap;
+    
+    std::string source = R"(
+        typedef struct {
+            float x;
+            float y;
+            float z;
+            float w;
+        } Vector4;
+
+        typedef struct alignas(16) {
+            double position[3];
+            float mass;
+            int id;
+        } Particle;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify Vector4 struct
+    EXPECT_TRUE(typeMap.isTypeRegistered("Vector4"));
+    EXPECT_EQ(typeMap.getTypeSize("Vector4"), 4 * sizeof(float));
+    
+    // Verify Particle struct with explicit alignment
+    EXPECT_TRUE(typeMap.isTypeRegistered("Particle"));
+    EXPECT_EQ(typeMap.getAlignment("Particle"), 16);
+    // Size should account for alignment and padding
+    size_t expected_size = ((3 * sizeof(double) + sizeof(float) + sizeof(int) + 15) / 16) * 16;
+    EXPECT_EQ(typeMap.getTypeSize("Particle"), expected_size);
+}
+
+// Test circular typedef detection
+TEST_F(TypeMapTest, CircularTypedef) {
+    TypeMap typeMap;
+    
+    // Create a circular typedef chain
+    typeMap.registerType("BaseType", 8);
+    typeMap.registerTypedef("TypeA", "TypeB");  // Forward reference
+    typeMap.registerTypedef("TypeB", "TypeC");
+    EXPECT_THROW(typeMap.registerTypedef("TypeC", "TypeA"), std::runtime_error);  // Would create a cycle
+}
+
+// Test type resolution with qualifiers
+TEST_F(TypeMapTest, QualifierHandling) {
+    TypeMap typeMap;
+    
+    std::string source = R"(
+        typedef const int ConstInt;
+        typedef volatile float VolatileFloat;
+        typedef const volatile double ConstVolatileDouble;
+        typedef int* restrict RestrictIntPtr;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify that qualifiers don't affect size/alignment
+    EXPECT_EQ(typeMap.getTypeSize("ConstInt"), sizeof(int));
+    EXPECT_EQ(typeMap.getTypeSize("VolatileFloat"), sizeof(float));
+    EXPECT_EQ(typeMap.getTypeSize("ConstVolatileDouble"), sizeof(double));
+    EXPECT_EQ(typeMap.getTypeSize("RestrictIntPtr"), sizeof(int*));
+}
+
+// Test complex struct alignment and padding
+TEST_F(TypeMapTest, ComplexStructAlignment) {
+    TypeMap typeMap;
+    
+    std::string source = R"(
+        typedef struct {
+            char a;     // 1 byte
+            double b;   // 8 bytes, needs alignment
+            short c;    // 2 bytes
+            int d;      // 4 bytes
+        } MixedStruct;
+
+        typedef struct alignas(32) {
+            float vec[3];    // 12 bytes
+            char flag;       // 1 byte
+            double value;    // 8 bytes
+        } AlignedStruct;
+    )";
+    
+    typeMap.parseSource(source);
+    
+    // Verify MixedStruct
+    EXPECT_TRUE(typeMap.isTypeRegistered("MixedStruct"));
+    // Size should account for natural alignment and padding
+    size_t expected_mixed_size = ((1 + 7) & ~7) + 8 + ((2 + 3) & ~3) + 4;
+    expected_mixed_size = (expected_mixed_size + 7) & ~7;  // Final alignment
+    EXPECT_EQ(typeMap.getTypeSize("MixedStruct"), expected_mixed_size);
+    
+    // Verify AlignedStruct with explicit alignment
+    EXPECT_TRUE(typeMap.isTypeRegistered("AlignedStruct"));
+    EXPECT_EQ(typeMap.getAlignment("AlignedStruct"), 32);
+    // Size should be rounded up to multiple of 32 due to alignas(32)
+    size_t expected_aligned_size = ((12 + 1 + 7 + 8 + 31) / 32) * 32;
+    EXPECT_EQ(typeMap.getTypeSize("AlignedStruct"), expected_aligned_size);
+}
+
+// Test clear functionality
+TEST_F(TypeMapTest, ClearFunctionality) {
+    TypeMap typeMap;
+    
+    // Register some custom types
+    typeMap.registerType("CustomType1", 16);
+    typeMap.registerType("CustomType2", 32);
+    typeMap.registerTypedef("AliasType", "CustomType1");
+    
+    // Verify registration
+    EXPECT_TRUE(typeMap.isTypeRegistered("CustomType1"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("CustomType2"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("AliasType"));
+    
+    // Clear all types
+    typeMap.clear();
+    
+    // Custom types should be gone
+    EXPECT_FALSE(typeMap.isTypeRegistered("CustomType1"));
+    EXPECT_FALSE(typeMap.isTypeRegistered("CustomType2"));
+    EXPECT_FALSE(typeMap.isTypeRegistered("AliasType"));
+    
+    // But built-in types should still be available
+    EXPECT_TRUE(typeMap.isTypeRegistered("int"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("float"));
+    EXPECT_TRUE(typeMap.isTypeRegistered("double"));
 } 

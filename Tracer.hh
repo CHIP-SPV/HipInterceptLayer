@@ -8,7 +8,7 @@
 
 // Forward declare the real hipMemcpy function getter
 typedef hipError_t (*hipMemcpy_fn)(void *, const void *, size_t, hipMemcpyKind);
-hipMemcpy_fn get_real_hipMemcpy();
+inline hipMemcpy_fn get_real_hipMemcpy();
 
 #ifndef HIP_INTERCEPT_LAYER_TRACER_HH
 #define HIP_INTERCEPT_LAYER_TRACER_HH
@@ -50,9 +50,9 @@ class ArgState {
         }
     }
 
-    size_t total_size() const { return data_type_size * array_size; }
+    inline size_t total_size() const { return data_type_size * array_size; }
 
-    void captureGpuMemory(void* ptr, size_t capture_size, size_t element_size) {
+    inline void captureGpuMemory(void* ptr, size_t capture_size, size_t element_size) {
         if (!ptr || capture_size == 0) return;
         
         // Ensure GPU operations are complete
@@ -90,7 +90,7 @@ class ArgState {
                   << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
     }
 
-    void captureHostMemory(void* ptr, size_t capture_size, size_t element_size) {
+    inline void captureHostMemory(void* ptr, size_t capture_size, size_t element_size) {
         if (!ptr || capture_size == 0) return;
         
         // Resize the data vector to accommodate the captured memory
@@ -107,7 +107,7 @@ class ArgState {
                   << " checksum: " << std::hex << std::setprecision(8) << checksum << std::dec << std::endl;
     }
 
-    void serialize(std::ofstream& file) const {
+    inline void serialize(std::ofstream& file) const {
         file.write(reinterpret_cast<const char*>(&data_type_size), sizeof(data_type_size));
         file.write(reinterpret_cast<const char*>(&array_size), sizeof(array_size));
         if (!data.empty()) {
@@ -115,7 +115,7 @@ class ArgState {
         }
     }
 
-    static ArgState deserialize(std::ifstream& file) {
+    static inline ArgState deserialize(std::ifstream& file) {
         ArgState arg;
         file.read(reinterpret_cast<char*>(&arg.data_type_size), sizeof(arg.data_type_size));
         file.read(reinterpret_cast<char*>(&arg.array_size), sizeof(arg.array_size));
@@ -138,8 +138,8 @@ public:
     std::vector<ArgState> post_args;
     OperationType type;
 
-    bool isKernel() const { return type == OperationType::KERNEL; }
-    bool isMemory() const { return type == OperationType::MEMORY; }
+    inline bool isKernel() const { return type == OperationType::KERNEL; }
+    inline bool isMemory() const { return type == OperationType::MEMORY; }
     
     virtual ~Operation() = default;
     
@@ -150,7 +150,7 @@ public:
 
     Operation() : pre_args(), post_args() {}
 
-    static std::shared_ptr<Operation> deserialize(std::ifstream& file);
+    static inline std::shared_ptr<Operation> deserialize(std::ifstream& file);
 
     virtual void serialize(std::ofstream& file) const = 0;
 

@@ -98,8 +98,11 @@ public:
                 line = line.substr(0, comment_pos);
             }
 
+            // Trim whitespace
+            line = std::regex_replace(line, std::regex("^\\s+|\\s+$"), "");
+
             // Skip empty lines
-            if (line.find_first_not_of(" \t\r\n") == std::string::npos) {
+            if (line.empty()) {
                 continue;
             }
 
@@ -109,9 +112,13 @@ public:
 
             if (line.find("typedef") != std::string::npos) {
                 if (line.find("struct") != std::string::npos) {
+                    // Start of struct typedef
                     in_struct = true;
+                    current_block += line + "\n";
+                } else {
+                    // Simple typedef
+                    parseTypedef(line);
                 }
-                current_block += line + "\n";
             } else if (in_struct) {
                 current_block += line + "\n";
                 if (brace_count == 0) {
@@ -120,9 +127,6 @@ public:
                     current_block.clear();
                     in_struct = false;
                 }
-            } else if (line.find("typedef") != std::string::npos) {
-                // Simple typedef
-                parseTypedef(line);
             }
         }
     }
@@ -225,7 +229,7 @@ private:
     // Source parsing helpers
     void parseTypedef(const std::string& typedef_str) {
         static std::regex struct_regex(R"(typedef\s+struct\s+(?:alignas\s*\((\d+)\))?\s*\{([^}]+)\}\s*(\w+)\s*;)");
-        static std::regex simple_typedef_regex(R"(typedef\s+([^;]+)\s+(\w+)\s*;)");
+        static std::regex simple_typedef_regex(R"(typedef\s+(\w+(?:\s*\[\d+\])?)\s+(\w+(?:\s*\[\d+\])?)\s*;)");
 
         std::smatch match;
         if (std::regex_search(typedef_str, match, struct_regex)) {
@@ -238,7 +242,20 @@ private:
             // Simple typedef
             std::string existing_type = match[1].str();
             std::string new_type = match[2].str();
-            registerTypedef(new_type, existing_type);
+
+            // Check if this is an array type
+            std::regex array_regex(R"((\w+)\s*\[(\d+)\])");
+            std::smatch array_match;
+            if (std::regex_search(existing_type, array_match, array_regex)) {
+                // This is an array type, calculate its size
+                std::string base_type = array_match[1].str();
+                size_t array_size = std::stoul(array_match[2].str());
+                size_t base_size = getTypeSize(base_type);
+                registerType(new_type, base_size * array_size);
+            } else {
+                // Regular typedef
+                registerTypedef(new_type, existing_type);
+            }
         }
     }
 
@@ -317,4 +334,4 @@ private:
 
         return members;
     }
-}; 
+};

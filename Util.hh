@@ -29,10 +29,9 @@
 #include <link.h>
 #include "Tracer.hh"
 
-
 //Forward declarations
 struct dim3;
-size_t countKernelArgs(void** args);
+
 inline size_t countKernelArgs(void** args) {
     if (!args) return 0;
     
@@ -49,7 +48,7 @@ inline size_t countKernelArgs(void** args) {
 }
 
 // Helper function to convert hipMemcpyKind to string
-inline static const char* memcpyKindToString(hipMemcpyKind kind) {
+inline const char* memcpyKindToString(hipMemcpyKind kind) {
   switch(kind) {
     case hipMemcpyHostToHost: return "hipMemcpyHostToHost";
     case hipMemcpyHostToDevice: return "hipMemcpyHostToDevice"; 
@@ -61,14 +60,14 @@ inline static const char* memcpyKindToString(hipMemcpyKind kind) {
 }
 
 // Helper function to convert dim3 to string
-inline static std::string dim3ToString(dim3 d) {
+inline std::string dim3ToString(dim3 d) {
   std::stringstream ss;
   ss << "{" << d.x << "," << d.y << "," << d.z << "}";
   return ss.str();
 }
 
 // Helper for hipDeviceProp_t
-inline static std::string devicePropsToString(const hipDeviceProp_t* props) {
+inline std::string devicePropsToString(const hipDeviceProp_t* props) {
   if (!props) return "null";
   std::stringstream ss;
   ss << "{name=" << props->name << ", totalGlobalMem=" << props->totalGlobalMem << "}";
